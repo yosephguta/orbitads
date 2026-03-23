@@ -1,0 +1,34 @@
+# ── Web framework ─────────────────────────────────────────────
+fastapi==0.115.5
+uvicorn[standard]==0.32.1        # the server that runs FastAPI
+
+# ── Database ──────────────────────────────────────────────────
+sqlmodel==0.0.22                 # ORM — models are also Pydantic schemas
+aiosqlite==0.20.0                # async PostgreSQL driver
+alembic==1.14.0                  # database migrations (Phase 4)
+
+# ── Auth ──────────────────────────────────────────────────────
+python-jose[cryptography]==3.3.0 # JWT creation and verification
+passlib[bcrypt]==1.7.4           # password hashing
+python-multipart==0.0.12         # needed for login form data
+
+# ── Config ────────────────────────────────────────────────────
+pydantic-settings==2.6.1         # reads .env into Settings class
+python-dotenv==1.0.1
+
+# ── AWS / S3 ──────────────────────────────────────────────────
+boto3==1.35.74                   # AWS SDK — S3 uploads, etc.
+
+# ── HTTP client ───────────────────────────────────────────────
+httpx==0.28.0                    # used to call NHTSA, Claude, ElevenLabs, etc.
+
+# ── AI ────────────────────────────────────────────────────────
+anthropic==0.40.0                # Claude API client
+
+# ── Task queue (Phase 2) ──────────────────────────────────────
+celery==5.4.0
+redis==5.2.1
+
+# ── Testing ───────────────────────────────────────────────────
+pytest==8.3.4
+pytest-asyncio==0.24.0
