@@ -1,7 +1,7 @@
 from __future__ import annotations
 from datetime import datetime, timezone
 from enum import Enum
-from typing import Optional, TYPE_CHECKING
+from typing import Optional
 
 from sqlalchemy import Column, Text
 from sqlmodel import Field, Relationship, SQLModel
@@ -98,7 +98,7 @@ class Job(SQLModel, table=True):
 
     # ── Relationship ──────────────────────────────────────────
     # Lets us do job.user to get the User who created this job
-    user: Optional["User"] = Relationship(back_populates="jobs")
+    
 
 
 # ── API: Job creation input ───────────────────────────────────
