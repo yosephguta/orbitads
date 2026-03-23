@@ -1,3 +1,6 @@
+from __future__ import annotations
+
+from datetime import datetime, timezone
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -12,7 +15,7 @@ from app.core.security import (
     hash_password,
     verify_password,
 )
-from app.models.user import User, UserCreate, UserRead
+from app.models.user import User, UserCreate, UserRead, UserUpdate
 
 # ── Router ────────────────────────────────────────────────────
 # All routes in this file will be prefixed with /auth
@@ -120,4 +123,20 @@ async def me(
 
     The frontend calls this on page load to check if the session is still valid.
     """
+    return current_user
+
+
+@router.patch("/me", response_model=UserRead)
+async def update_me(
+    payload: UserUpdate,
+    current_user: Annotated[User, Depends(get_current_user)],
+    session: Annotated[SQLModelAsyncSession, Depends(get_session)],
+):
+    """Update the current user's profile — voice ID, avatar ID, etc."""
+    for key, value in payload.model_dump(exclude_unset=True).items():
+        setattr(current_user, key, value)
+    current_user.updated_at = datetime.now(timezone.utc)
+    session.add(current_user)
+    await session.commit()
+    await session.refresh(current_user)
     return current_user
