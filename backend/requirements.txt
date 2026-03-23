@@ -3,7 +3,7 @@ fastapi==0.115.5
 uvicorn[standard]==0.32.1        # the server that runs FastAPI
 
 # ── Database ──────────────────────────────────────────────────
-sqlmodel==0.0.22                 # ORM — models are also Pydantic schemas
+sqlmodel>=0.0.22               # ORM — models are also Pydantic schemas
 aiosqlite==0.20.0                # async PostgreSQL driver
 alembic==1.14.0                  # database migrations (Phase 4)
 
@@ -11,6 +11,7 @@ alembic==1.14.0                  # database migrations (Phase 4)
 python-jose[cryptography]==3.3.0 # JWT creation and verification
 passlib[bcrypt]==1.7.4           # password hashing
 python-multipart==0.0.12         # needed for login form data
+bcrypt==4.0.1
 
 # ── Config ────────────────────────────────────────────────────
 pydantic-settings==2.6.1         # reads .env into Settings class

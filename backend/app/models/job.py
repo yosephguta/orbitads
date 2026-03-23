@@ -1,3 +1,4 @@
+from __future__ import annotations
 from datetime import datetime, timezone
 from enum import Enum
 from typing import Optional, TYPE_CHECKING
@@ -5,8 +6,7 @@ from typing import Optional, TYPE_CHECKING
 from sqlalchemy import Column, Text
 from sqlmodel import Field, Relationship, SQLModel
 
-if TYPE_CHECKING:
-    from app.models.user import User
+
 
 
 # ── Status enum ───────────────────────────────────────────────

@@ -1,3 +1,4 @@
+from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Optional, TYPE_CHECKING
 
@@ -5,8 +6,7 @@ from sqlmodel import Field, Relationship, SQLModel
 
 # TYPE_CHECKING is False at runtime — this import only runs for type hints.
 # It lets us reference Job without causing a circular import.
-if TYPE_CHECKING:
-    from app.models.job import Job
+
 
 
 # ── Shared base ───────────────────────────────────────────────
@@ -42,7 +42,7 @@ class User(UserBase, table=True):
 
     # One user can have many jobs.
     # We'll use this later to load all ads a salesperson has created.
-    jobs: list["Job"] = Relationship(back_populates="user")
+    
 
 
 # ── API: Registration input ───────────────────────────────────
