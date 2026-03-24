@@ -16,19 +16,34 @@ from app.services.vin_decoder import decode_vin
 from app.services.script_generator import generate_ad_script
 from app.services.voice_clone import text_to_speech
 from app.services.avatar import submit_video, wait_for_video, download_video
+from app.services.video_assembler import (
+    build_ad_timeline,
+    submit_render,
+    wait_for_render,
+    download_render,
+)
 from app.services.s3 import (
     upload_bytes,
     make_audio_output_key,
     make_avatar_output_key,
+    make_final_video_key,
     create_presigned_download_url,
+    get_audio_duration,
 )
 
 router = APIRouter(prefix="/jobs", tags=["jobs"])
 
+# Default car photos used when none are provided
+# These are placeholder Kia photos — Step 18 replaces this with real scraping
+DEFAULT_CAR_PHOTOS = [
+    "https://platform.cstatic-images.com/xxlarge/in/v2/ff3aaaec-e513-4b42-8f96-8ed9d9280fd1/0b4af000-a573-4afc-b04d-9c9639bdbf02/ZfmeNMBUffUiOHI44HeeZ-2eR0U.jpg",
+    "https://platform.cstatic-images.com/xxlarge/in/v2/ff3aaaec-e513-4b42-8f96-8ed9d9280fd1/0b4af000-a573-4afc-b04d-9c9639bdbf02/MmGE9KYnZW-P85anPOVCpjgH2sM.jpg",
+    "https://platform.cstatic-images.com/xxlarge/in/v2/ff3aaaec-e513-4b42-8f96-8ed9d9280fd1/0b4af000-a573-4afc-b04d-9c9639bdbf02/GulOJ7STWy3Yh637E3ORY1cpT7w.jpg",
+]
+
 
 # ── Helper ────────────────────────────────────────────────────
 async def _update_job(session: AsyncSession, job: Job, **kwargs) -> None:
-    """Update job fields, always set updated_at, and commit immediately."""
     for key, value in kwargs.items():
         setattr(job, key, value)
     job.updated_at = datetime.now(timezone.utc)
@@ -37,20 +52,21 @@ async def _update_job(session: AsyncSession, job: Job, **kwargs) -> None:
     await session.refresh(job)
 
 
-# ── Background pipeline ───────────────────────────────────────
-async def _run_pipeline(job_id: int, user_id: int, db_url: str):
+# ── Full pipeline ─────────────────────────────────────────────
+async def _run_pipeline(job_id: int, user_id: int):
     """
-    Full ad generation pipeline — runs in the background after
-    the HTTP response is sent so the frontend gets the job ID immediately.
+    Full ad generation pipeline — runs in the background.
 
     Stages:
-      1. VIN decode
-      2. Script generation (Claude)
-      3. Voice TTS (ElevenLabs) — only if user has a voice_id
-      4. Avatar video (HeyGen)  — only if user has an avatar_id
+      1. VIN decode         (10% → 30%)
+      2. Script generation  (30% → 50%)
+      3. Voice TTS          (50% → 65%)
+      4. Avatar generation  (65% → 80%)
+      5. Video assembly     (80% → 100%)
     """
-    # We need a fresh database session since this runs outside the request
     from app.core.database import AsyncSessionLocal
+    from app.core.config import get_settings
+    settings = get_settings()
 
     async with AsyncSessionLocal() as session:
         job = await session.get(Job, job_id)
@@ -92,7 +108,7 @@ async def _run_pipeline(job_id: int, user_id: int, db_url: str):
             )
             await _update_job(session, job,
                 generated_script=json.dumps(script),
-                progress_pct=55,
+                progress_pct=50,
             )
         except Exception as e:
             await _update_job(session, job,
@@ -103,29 +119,22 @@ async def _run_pipeline(job_id: int, user_id: int, db_url: str):
             return
 
         # ── Stage 3: Voice TTS ────────────────────────────────
-        # Only runs if the user has set up their ElevenLabs voice
         audio_s3_key = None
         if user.elevenlabs_voice_id:
             await _update_job(session, job,
                 status=JobStatus.VOICE_CLONING,
-                progress_pct=65,
+                progress_pct=55,
             )
             try:
-                full_script = script["full_script"]
                 audio_bytes = await text_to_speech(
-                    text=full_script,
+                    text=script["full_script"],
                     voice_id=user.elevenlabs_voice_id,
                 )
-                # Save audio to S3
                 audio_key = make_audio_output_key(job.id)
                 upload_bytes(audio_bytes, audio_key, "audio/mpeg")
                 audio_s3_key = audio_key
-                await _update_job(session, job,
-                    progress_pct=75,
-                )
+                await _update_job(session, job, progress_pct=65)
             except Exception as e:
-                # TTS failure is non-fatal — we can still proceed
-                # without voice if needed, or fail the job
                 await _update_job(session, job,
                     status=JobStatus.FAILED,
                     error_message=f"Voice TTS failed: {e}",
@@ -133,48 +142,111 @@ async def _run_pipeline(job_id: int, user_id: int, db_url: str):
                 )
                 return
 
-        # ── Stage 4: Avatar video ─────────────────────────────
-        # Only runs if user has avatar_id AND we have audio
+        # ── Stage 4: Avatar generation ────────────────────────
+        avatar_s3_key = None
         if user.heygen_avatar_id and audio_s3_key:
             await _update_job(session, job,
                 status=JobStatus.AVATAR_GENERATING,
-                progress_pct=80,
+                progress_pct=70,
             )
             try:
-                from app.core.config import get_settings
-                settings = get_settings()
-
-                # Build public audio URL for HeyGen
                 audio_url = (
                     f"https://{settings.s3_bucket_name}.s3."
                     f"{settings.aws_region}.amazonaws.com/{audio_s3_key}"
                 )
-
-                # Submit to HeyGen and wait for completion
                 video_id = await submit_video(
                     avatar_id=user.heygen_avatar_id,
                     audio_url=audio_url,
                 )
                 heygen_video_url = await wait_for_video(video_id)
-
-                # Download and save to our S3
                 video_bytes = await download_video(heygen_video_url)
                 avatar_key = make_avatar_output_key(job.id)
                 upload_bytes(video_bytes, avatar_key, "video/mp4")
-
-                # Generate a presigned download URL for the frontend
-                final_url = create_presigned_download_url(avatar_key)
-
+                avatar_s3_key = avatar_key
                 await _update_job(session, job,
                     heygen_video_url=heygen_video_url,
-                    final_video_s3_key=avatar_key,
-                    final_video_url=final_url,
-                    progress_pct=100,
+                    progress_pct=80,
                 )
             except Exception as e:
                 await _update_job(session, job,
                     status=JobStatus.FAILED,
                     error_message=f"Avatar generation failed: {e}",
+                    completed_at=datetime.now(timezone.utc),
+                )
+                return
+
+        # ── Stage 5: Video assembly ───────────────────────────
+        if avatar_s3_key and audio_s3_key:
+            await _update_job(session, job,
+                status=JobStatus.ASSEMBLING,
+                progress_pct=85,
+            )
+            try:
+                # Public URLs for Shotstack to access
+                avatar_url = (
+                    f"https://{settings.s3_bucket_name}.s3."
+                    f"{settings.aws_region}.amazonaws.com/{avatar_s3_key}"
+                )
+                audio_url = (
+                    f"https://{settings.s3_bucket_name}.s3."
+                    f"{settings.aws_region}.amazonaws.com/{audio_s3_key}"
+                )
+
+                # Get actual audio duration for precise timing
+                audio_duration = get_audio_duration(audio_s3_key)
+
+                # Get car photos from job or use defaults
+                car_photos = DEFAULT_CAR_PHOTOS
+                if job.car_photo_urls:
+                    try:
+                        car_photos = json.loads(job.car_photo_urls)
+                    except Exception:
+                        car_photos = DEFAULT_CAR_PHOTOS
+
+                # Build feature highlights from vehicle data
+                vd = json.loads(job.vehicle_data) if job.vehicle_data else {}
+                highlights = _build_highlights(vd, user.dealership_name)
+
+                # Build vehicle summary line
+                from app.services.vin_decoder import vehicle_summary
+                v_summary = vehicle_summary(vd) if vd else "Visit us today"
+
+                # Build and submit the Shotstack timeline
+                timeline = build_ad_timeline(
+                    avatar_video_url=avatar_url,
+                    audio_url=audio_url,
+                    car_photo_urls=car_photos,
+                    dealership_name=user.dealership_name,
+                    vehicle_summary=v_summary,
+                    feature_highlights=highlights,
+                    duration=audio_duration,
+                    hook_pct=0.15,
+                    cta_pct=0.15,
+                    transition_style="dynamic",
+                    brand_color="#C4122F",
+                )
+
+                render_id = await submit_render(timeline)
+                final_video_url = await wait_for_render(render_id)
+
+                # Download and save final video to S3
+                final_bytes = await download_render(final_video_url)
+                final_key = make_final_video_key(job.id)
+                upload_bytes(final_bytes, final_key, "video/mp4")
+
+                # Generate presigned URL for frontend
+                presigned_url = create_presigned_download_url(final_key)
+
+                await _update_job(session, job,
+                    final_video_s3_key=final_key,
+                    final_video_url=presigned_url,
+                    progress_pct=100,
+                )
+
+            except Exception as e:
+                await _update_job(session, job,
+                    status=JobStatus.FAILED,
+                    error_message=f"Video assembly failed: {e}",
                     completed_at=datetime.now(timezone.utc),
                 )
                 return
@@ -187,6 +259,27 @@ async def _run_pipeline(job_id: int, user_id: int, db_url: str):
         )
 
 
+def _build_highlights(vehicle_data: dict, dealership_name: str) -> list[str]:
+    """
+    Build 3 feature highlight strings from vehicle data.
+    These appear as text overlays during the car photo section.
+    """
+    highlights = []
+
+    if vehicle_data.get("trim"):
+        highlights.append(f"{vehicle_data['trim']} Trim")
+    if vehicle_data.get("engine"):
+        highlights.append(f"{vehicle_data['engine']} Engine")
+    if vehicle_data.get("fuel_type"):
+        highlights.append(f"{vehicle_data['fuel_type']}")
+
+    # Pad with dealership name if we don't have enough
+    while len(highlights) < 3:
+        highlights.append(f"Visit {dealership_name}")
+
+    return highlights[:3]
+
+
 # ── Create job ────────────────────────────────────────────────
 @router.post("/", response_model=JobRead, status_code=status.HTTP_201_CREATED)
 async def create_job(
@@ -197,18 +290,8 @@ async def create_job(
 ):
     """
     Create a new ad generation job.
-
-    Returns the job immediately with status "pending".
-    The pipeline runs in the background — poll GET /jobs/{id}
-    every 5 seconds to check progress.
-
-    Progress stages:
-      0%   → pending
-      10%  → vin_decoding
-      40%  → script_generating
-      65%  → voice_cloning
-      80%  → avatar_generating
-      100% → completed
+    Returns immediately with status 'pending'.
+    Pipeline runs in the background — poll GET /jobs/{id} for progress.
     """
     if not payload.vin and not payload.listing_url:
         raise HTTPException(
@@ -216,7 +299,6 @@ async def create_job(
             detail="Please provide either a VIN or a listing URL.",
         )
 
-    # Create the job record immediately
     job = Job(
         user_id=current_user.id,
         vin=payload.vin,
@@ -224,6 +306,7 @@ async def create_job(
         theme=payload.theme,
         photos_s3_keys=payload.photos_s3_keys,
         voice_s3_key=payload.voice_s3_key,
+        car_photo_urls=payload.car_photo_urls,
         status=JobStatus.PENDING,
         progress_pct=0,
     )
@@ -231,16 +314,10 @@ async def create_job(
     await session.commit()
     await session.refresh(job)
 
-    # Kick off the pipeline in the background
-    # The HTTP response returns here — client gets job_id immediately
-    from app.core.config import get_settings
-    settings = get_settings()
-
     background_tasks.add_task(
         _run_pipeline,
         job_id=job.id,
         user_id=current_user.id,
-        db_url=settings.database_url,
     )
 
     return job
@@ -255,7 +332,6 @@ async def get_job(
 ):
     """Poll a job's current status and progress."""
     job = await session.get(Job, job_id)
-
     if not job:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,

@@ -168,3 +168,26 @@ def delete_object(s3_key: str) -> None:
         _s3.delete_object(Bucket=BUCKET, Key=s3_key)
     except ClientError as e:
         raise RuntimeError(f"Could not delete from S3: {e}") from e
+    
+
+def get_audio_duration(s3_key: str) -> float:
+    """
+    Download audio from S3 and return its duration in seconds.
+    Uses mutagen to read MP3 metadata without loading the full file.
+    """
+    import tempfile
+    import os
+    from mutagen.mp3 import MP3
+
+    # Download to a temp file — mutagen needs a file path
+    audio_bytes = download_bytes(s3_key)
+
+    with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as tmp:
+        tmp.write(audio_bytes)
+        tmp_path = tmp.name
+
+    try:
+        audio = MP3(tmp_path)
+        return round(audio.info.length, 2)
+    finally:
+        os.unlink(tmp_path)

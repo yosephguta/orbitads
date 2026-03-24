@@ -54,6 +54,9 @@ class Job(SQLModel, table=True):
     )
     voice_s3_key: Optional[str] = Field(default=None, max_length=512)
 
+    # JSON array of car photo URLs e.g. '["https://...", "https://..."]'
+    car_photo_urls: Optional[str] = Field(default=None, sa_column=Column(Text))
+
     # ── Pipeline output fields ────────────────────────────────
     # These start as None and get filled in as each stage completes.
 
@@ -107,8 +110,9 @@ class JobCreate(SQLModel):
     vin: Optional[str] = None
     listing_url: Optional[str] = None
     theme: str
-    photos_s3_keys: Optional[str] = None   # JSON array string
+    photos_s3_keys: Optional[str] = None
     voice_s3_key: Optional[str] = None
+    car_photo_urls: Optional[str] = None   # JSON array of car photo URLs
 
 
 # ── API: Job response ─────────────────────────────────────────
