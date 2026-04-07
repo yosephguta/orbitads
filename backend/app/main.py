@@ -53,10 +53,11 @@ app.add_middleware(
 # We'll uncomment these one by one as we build each route file.
 # They're listed here now so you can see the full picture.
 
-from app.api.routes import auth, jobs, uploads
+from app.api.routes import auth, jobs, uploads, photos
 app.include_router(auth.router,    prefix="/api/v1")
 app.include_router(uploads.router, prefix="/api/v1")
 app.include_router(jobs.router,    prefix="/api/v1")
+app.include_router(photos.router, prefix="/api/v1")
 
 
 # ── Health check ──────────────────────────────────────────────
