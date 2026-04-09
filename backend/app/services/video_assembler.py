@@ -107,6 +107,30 @@ def _vehicle_name_html(vehicle_summary: str) -> str:
         border-radius: 4px;
     ">{vehicle_summary}</p>"""
 
+def _make_photo_clip(url: str, start: float, duration: float, index: int) -> dict:
+    """
+    Create a Shotstack photo clip with walkaround motion effect.
+    Alternates zoom direction to simulate camera movement around the car.
+    """
+    effects = [
+        "zoomIn",
+        "zoomOut",
+        "slideLeft",
+        "slideRight",
+    ]
+    effect = effects[index % len(effects)]
+
+    return {
+        "asset": {"type": "image", "src": url},
+        "start":  start,
+        "length": duration,
+        "effect": effect,
+        "transition": {
+            "in":  "fade",
+            "out": "fade",
+        },
+    }
+
 
 def build_ad_timeline(
     avatar_video_url: str,
@@ -139,9 +163,9 @@ def build_ad_timeline(
     """
     theme = TRANSITION_THEMES.get(transition_style, TRANSITION_THEMES["dynamic"])
 
-    # Ensure 3 photos
-    photos = list(car_photo_urls[:3])
-    while len(photos) < 3:
+    # Support up to 7 photos (5 exterior + 2 interior)
+    photos = list(car_photo_urls[:7])
+    while len(photos) < 1:
         photos.append(photos[-1] if photos else "")
 
     highlights = list(feature_highlights[:3])
@@ -152,16 +176,16 @@ def build_ad_timeline(
     hook_len         = round(duration * hook_pct, 2)
     cta_len          = round(duration * cta_pct, 2)
     photo_section    = round(duration - hook_len - cta_len, 2)
-    photo_len        = round(photo_section / 3, 2)
+    num_photos       = len(photos)
+    photo_len        = round(photo_section / num_photos, 2)
 
     hook_start       = 0
     photo_start      = hook_len
     cta_start        = duration - cta_len
 
     photo_starts     = [
-        photo_start,
-        photo_start + photo_len,
-        photo_start + photo_len * 2,
+        round(photo_start + (i * photo_len), 2)
+        for i in range(num_photos)
     ]
 
     clips = []
@@ -215,19 +239,9 @@ def build_ad_timeline(
         },
     })
 
-    # ── Car photo slideshow ───────────────────────────────────
-    effects = theme["photo_effects"]
+    # ── Car photo slideshow (walkaround motion) ───────────────
     for i, (photo_url, start) in enumerate(zip(photos, photo_starts)):
-        clips.append({
-            "asset": {"type": "image", "src": photo_url},
-            "start": start,
-            "length": photo_len,
-            "effect": effects[i % len(effects)],
-            "transition": {
-                "in": theme["photo_in"],
-                "out": theme["photo_out"],
-            },
-        })
+        clips.append(_make_photo_clip(photo_url, start, photo_len, i))
 
     # ── Feature text overlays (one per photo) ─────────────────
     for text, start in zip(highlights, photo_starts):
