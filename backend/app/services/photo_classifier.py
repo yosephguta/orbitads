@@ -42,6 +42,7 @@ WALKAROUND_ORDER = [
     "exterior_rear_left",
     "exterior_left",
     "exterior_front_left",
+    "exterior_detail",      # ← add this
     "interior_dashboard",
     "interior_seats",
     "interior_cargo",
@@ -64,6 +65,21 @@ async def classify_photo(image_url: str) -> str:
     Returns:
         One of the WALKAROUND_ORDER category strings
     """
+
+ # ── Pre-filter known junk URLs ────────────────────────────
+    url_lower = image_url.lower()
+    skip_patterns = [
+        'valuebadge', 'showme', 'carfax', 'autocheck',
+        'logo', 'badge', 'iv.png', 'videoplayer',
+        'dealervideopro', 'showme.svg',
+    ]
+    if any(p in url_lower for p in skip_patterns):
+        return "other"
+
+    # ── Skip non-image file types ─────────────────────────────
+    if url_lower.endswith('.png') and any(p in url_lower for p in ['badge', 'logo', 'icon']):
+        return "other"
+
     try:
         # Download the image bytes
         async with httpx.AsyncClient(timeout=15.0) as client:
@@ -86,7 +102,7 @@ async def classify_photo(image_url: str) -> str:
         'logo', 'badge', 'iv.png', 'videoplayer',
         'dealervideopro',
         ]
-        
+
         if any(p in url_lower for p in skip_patterns):
             return "other"
 
@@ -111,15 +127,29 @@ async def classify_photo(image_url: str) -> str:
                         },
                         {
                             "type": "text",
-                            "text": (
-                                "Classify this car photo with exactly one of these labels:\n"
-                                "exterior_front, exterior_front_right, exterior_right, "
-                                "exterior_rear_right, exterior_rear, exterior_rear_left, "
-                                "exterior_left, exterior_front_left, "
-                                "interior_dashboard, interior_seats, interior_cargo, "
-                                "interior_detail, other\n\n"
-                                "Reply with only the label, nothing else."
-                            ),
+                         "text": (
+                            "Classify this car photo with exactly one of these labels:\n\n"
+                            "FULL CAR EXTERIOR (most of car body visible):\n"
+                            "exterior_front, exterior_front_right, exterior_right, "
+                            "exterior_rear_right, exterior_rear, exterior_rear_left, "
+                            "exterior_left, exterior_front_left\n\n"
+                            "CLOSE-UP EXTERIOR DETAILS (zoomed in on one part):\n"
+                            "exterior_detail\n\n"
+                            "INTERIOR:\n"
+                            "interior_dashboard, interior_seats, interior_cargo, interior_detail\n\n"
+                            "NOT A CAR PHOTO:\n"
+                            "other\n\n"
+                            "Rules:\n"
+                            "- exterior_* (not exterior_detail) = you can see at least half the car body\n"
+                            "- exterior_detail = close-up of wheel, tire, mirror, light, badge, trim piece\n"
+                            "- interior_dashboard = steering wheel area, infotainment, gauges\n"
+                            "- interior_seats = seats, headrests, upholstery\n"
+                            "- interior_cargo = trunk, cargo area\n"
+                            "- interior_detail = console, door panel, controls, buttons, any other interior\n"
+                            "- other = logos, dealership signs, window stickers, price sheets, QR codes\n"
+                            "- When in doubt between interior_detail and other, choose interior_detail\n\n"
+                            "Reply with only the label, nothing else."
+                        ),
                         },
                     ],
                 }
