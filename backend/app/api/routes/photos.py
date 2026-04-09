@@ -30,9 +30,10 @@ class ClassifiedPhoto(BaseModel):
 
 class ClassifyResponse(BaseModel):
     classified: list[ClassifiedPhoto]
-    exterior:   list[str]   # URLs in walkaround order
-    interior:   list[str]   # Interior URLs in order
-    other:      list[str]   # Unclassified URLs
+    exterior:   list[str]
+    interior:   list[str]
+    additional: list[str]
+    other:      list[str]
 
 
 @router.post("/classify", response_model=ClassifyResponse)
@@ -46,8 +47,8 @@ async def classify_photos(
     The extension calls this after scraping a listing.
     The response feeds the photo review UI in the popup.
     """
-    # Limit to 20 photos max to control cost
-    photos_to_classify = payload.photo_urls[:20]
+    # Limit to 30 photos max to control cost
+    photos_to_classify = payload.photo_urls[:30]
 
     # Classify all photos concurrently
     classified = await classify_photos_batch(
@@ -61,22 +62,28 @@ async def classify_photos(
 
     # Split into groups for the UI
     exterior_labels = {
-        "exterior_front", "exterior_front_right", "exterior_right",
-        "exterior_rear_right", "exterior_rear", "exterior_rear_left",
-        "exterior_left", "exterior_front_left",
+    "exterior_front", "exterior_front_right", "exterior_right",
+    "exterior_rear_right", "exterior_rear", "exterior_rear_left",
+    "exterior_left", "exterior_front_left",
+    # exterior_detail intentionally excluded — goes to additional
     }
     interior_labels = {
-        "interior_dashboard", "interior_seats",
-        "interior_cargo", "interior_detail",
+        "interior_dashboard", "interior_seats", "interior_cargo",
+    }
+    additional_labels = {
+        "interior_detail",
+        "exterior_detail",   # ← add this
     }
 
-    exterior = [p["url"] for p in sorted_photos if p["label"] in exterior_labels]
-    interior = [p["url"] for p in sorted_photos if p["label"] in interior_labels]
-    other    = [p["url"] for p in sorted_photos if p["label"] == "other"]
+    exterior   = [p["url"] for p in sorted_photos if p["label"] in exterior_labels]
+    interior   = [p["url"] for p in sorted_photos if p["label"] in interior_labels]
+    additional = [p["url"] for p in sorted_photos if p["label"] in additional_labels]
+    other      = [p["url"] for p in sorted_photos if p["label"] == "other"]
 
     return ClassifyResponse(
         classified=[ClassifiedPhoto(**p) for p in classified],
         exterior=exterior,
         interior=interior,
+        additional=additional,
         other=other,
     )
