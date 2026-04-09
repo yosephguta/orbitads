@@ -196,12 +196,29 @@ async def _run_pipeline(job_id: int, user_id: int):
                 audio_duration = get_audio_duration(audio_s3_key)
 
                 # Get car photos from job or use defaults
-                car_photos = DEFAULT_CAR_PHOTOS
+                # Get reviewed photos from job
+                raw_photos = DEFAULT_CAR_PHOTOS
                 if job.car_photo_urls:
                     try:
-                        car_photos = json.loads(job.car_photo_urls)
+                        raw_photos = json.loads(job.car_photo_urls)
                     except Exception:
-                        car_photos = DEFAULT_CAR_PHOTOS
+                        raw_photos = DEFAULT_CAR_PHOTOS
+
+                # Apply walkaround classification and ordering
+                await _update_job(session, job,
+                    progress_pct=82,
+                )
+                try:
+                    from app.services.photo_classifier import get_walkaround_photos
+                    car_photos = await get_walkaround_photos(
+                        photo_urls=raw_photos,
+                        exterior_count=5,
+                        interior_count=2,
+                    )
+                    print(f"Walkaround photos selected: {len(car_photos)}")
+                except Exception as e:
+                    print(f"Walkaround ordering failed, using raw photos: {e}")
+                    car_photos = raw_photos[:7]
 
                 # Build feature highlights from vehicle data
                 vd = json.loads(job.vehicle_data) if job.vehicle_data else {}
