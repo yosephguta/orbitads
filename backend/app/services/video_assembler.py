@@ -3,22 +3,17 @@ from __future__ import annotations
 """
 Shotstack Video Assembly Service
 ──────────────────────────────────
-Ad structure (back to the correct format):
+Two ad formats:
 
+1. Avatar + Slideshow (premium):
   |-- Hook (15%) --|------ Photo slideshow (70%) ------|-- CTA (15%) --|
-  | Avatar talking |  Car photo 1 | Car photo 2 | Photo 3 | Avatar talking |
-  |________________|______________|_____________|_________|_______________|
+  | Avatar talking |  Car photos with motion effects   | Avatar talking |
   |<-------------- ElevenLabs audio runs the full length -------------->|
 
-Avatar is muted — ElevenLabs audio is the single source of truth.
-Avatar visuals are shown during hook and CTA only.
-Photos fill the middle with ken burns effects and text overlays.
-
-Lip sync works because:
-  - Hook section shows avatar from trim=0 (matches audio start)
-  - CTA section shows avatar trimmed to where CTA begins in the audio
-  - Audio plays uninterrupted the whole time
-  - Since avatar is muted, no double audio
+2. Slideshow only (free):
+  |---------------------- Photo slideshow (100%) ----------------------|
+  |              Car photos with motion effects + text overlays        |
+  |<-------------- ElevenLabs audio runs the full length -------------->|
 """
 
 import httpx
@@ -31,42 +26,45 @@ settings = get_settings()
 SHOTSTACK_URL        = "https://api.shotstack.io/stage/render"
 SHOTSTACK_STATUS_URL = "https://api.shotstack.io/stage/render/{render_id}"
 
-# ── Transition themes ─────────────────────────────────────────
+DEFAULT_BRAND_COLOR  = "#C4122F"
+
+# Slideshow effects — cinematic but not distracting
+SLIDESHOW_EFFECTS = [
+    {"effect": "zoomIn",  "transition_in": "fade",     "transition_out": "fadeSlow"},
+    {"effect": "zoomOut", "transition_in": "fadeSlow",  "transition_out": "fadeSlow"},
+    {"effect": "zoomIn",  "transition_in": "fadeSlow",  "transition_out": "fadeSlow"},
+    {"effect": "zoomOut", "transition_in": "fadeSlow",  "transition_out": "fadeSlow"},
+    {"effect": "zoomIn",  "transition_in": "fadeSlow",  "transition_out": "fadeSlow"},
+    {"effect": "zoomIn",  "transition_in": "fadeSlow",  "transition_out": "fadeSlow"},
+    {"effect": "zoomOut", "transition_in": "fadeSlow",  "transition_out": "fade"},
+]
+
 TRANSITION_THEMES = {
     "smooth": {
-        "avatar_in":     "fade",
-        "avatar_out":    "fade",
-        "photo_in":      "fadeSlow",
-        "photo_out":     "fadeSlow",
-        "photo_effects": ["zoomIn", "zoomIn", "zoomOut"],
+        "avatar_in":  "fade",
+        "avatar_out": "fade",
     },
     "dynamic": {
-        "avatar_in":     "fade",
-        "avatar_out":    "fade",
-        "photo_in":      "slideLeft",
-        "photo_out":     "fade",
-        "photo_effects": ["zoomIn", "zoomOut", "slideLeft"],
+        "avatar_in":  "fade",
+        "avatar_out": "fade",
     },
     "energetic": {
-        "avatar_in":     "fade",
-        "avatar_out":    "fade",
-        "photo_in":      "wipeLeft",
-        "photo_out":     "fade",
-        "photo_effects": ["zoomIn", "zoomIn", "zoomOut"],
+        "avatar_in":  "fade",
+        "avatar_out": "fade",
     },
 }
 
-DEFAULT_BRAND_COLOR = "#C4122F"
 
-
+# ── Headers ───────────────────────────────────────────────────
 def _headers() -> dict:
     return {
-        "x-api-key": settings.shotstack_api_key,
-        "Accept": "application/json",
+        "x-api-key":    settings.shotstack_api_key,
+        "Accept":       "application/json",
         "Content-Type": "application/json",
     }
 
 
+# ── HTML helpers ──────────────────────────────────────────────
 def _feature_text_html(text: str, brand_color: str = DEFAULT_BRAND_COLOR) -> str:
     return f"""<p style="
         font-family: 'Open Sans', sans-serif;
@@ -107,31 +105,24 @@ def _vehicle_name_html(vehicle_summary: str) -> str:
         border-radius: 4px;
     ">{vehicle_summary}</p>"""
 
-def _make_photo_clip(url: str, start: float, duration: float, index: int) -> dict:
-    """
-    Create a Shotstack photo clip with walkaround motion effect.
-    Alternates zoom direction to simulate camera movement around the car.
-    """
-    effects = [
-        "zoomIn",
-        "zoomOut",
-        "slideLeft",
-        "slideRight",
-    ]
-    effect = effects[index % len(effects)]
 
+# ── Photo clip builder ────────────────────────────────────────
+def _make_photo_clip(url: str, start: float, duration: float, index: int) -> dict:
+    """Create a polished slideshow photo clip with subtle motion."""
+    style = SLIDESHOW_EFFECTS[min(index, len(SLIDESHOW_EFFECTS) - 1)]
     return {
         "asset": {"type": "image", "src": url},
         "start":  start,
         "length": duration,
-        "effect": effect,
+        "effect": style["effect"],
         "transition": {
-            "in":  "fade",
-            "out": "fade",
+            "in":  style["transition_in"],
+            "out": style["transition_out"],
         },
     }
 
 
+# ── Format 1: Avatar + Slideshow (premium) ───────────────────
 def build_ad_timeline(
     avatar_video_url: str,
     audio_url: str,
@@ -146,25 +137,156 @@ def build_ad_timeline(
     brand_color: str = DEFAULT_BRAND_COLOR,
 ) -> dict:
     """
-    Build a car ad timeline: hook avatar → photo slideshow → CTA avatar.
-
-    Args:
-        avatar_video_url:  Public S3 URL of the HeyGen avatar video
-        audio_url:         Public S3 URL of the ElevenLabs audio
-        car_photo_urls:    3 car photo URLs
-        dealership_name:   e.g. "JBA Kia"
-        vehicle_summary:   e.g. "2022 Kia Forte GT Line"
-        feature_highlights: 3 feature strings
-        duration:          Total audio duration in seconds
-        hook_pct:          Fraction of duration for hook (default 15%)
-        cta_pct:           Fraction of duration for CTA (default 15%)
-        transition_style:  "smooth" | "dynamic" | "energetic"
-        brand_color:       Hex color for branding
+    Premium ad: hook avatar → photo slideshow → CTA avatar.
+    Avatar is muted — ElevenLabs audio is the single audio source.
     """
     theme = TRANSITION_THEMES.get(transition_style, TRANSITION_THEMES["dynamic"])
 
-    # Support up to 7 photos (5 exterior + 2 interior)
-    photos = list(car_photo_urls[:7])
+    # Timing
+    hook_len      = round(duration * hook_pct, 2)
+    cta_len       = round(duration * cta_pct, 2)
+    photo_section = round(duration - hook_len - cta_len, 2)
+
+    hook_start    = 0
+    photo_start   = hook_len
+    cta_start     = duration - cta_len
+
+    # Photos — cap at 7, minimum 3s each
+    max_photos  = min(7, max(3, int(photo_section / 3.0)))
+    photos      = list(car_photo_urls[:max_photos])
+    while len(photos) < 1:
+        photos.append(photos[-1] if photos else "")
+
+    num_photos  = len(photos)
+    photo_len   = round(photo_section / num_photos, 2)
+    photo_starts = [round(photo_start + i * photo_len, 2) for i in range(num_photos)]
+
+    highlights = list(feature_highlights[:3])
+    while len(highlights) < 3:
+        highlights.append(dealership_name)
+
+    clips = []
+
+    # Audio — full duration, single source
+    clips.append({
+        "asset": {"type": "audio", "src": audio_url, "volume": 1},
+        "start":  0,
+        "length": duration,
+    })
+
+    # Avatar hook — trim=0, lip syncs with audio start
+    clips.append({
+        "asset": {
+            "type":   "video",
+            "src":    avatar_video_url,
+            "trim":   0,
+            "volume": 0,
+        },
+        "start":  hook_start,
+        "length": hook_len,
+        "transition": {
+            "in":  theme["avatar_in"],
+            "out": theme["avatar_out"],
+        },
+    })
+
+    # Avatar CTA — trimmed to cta_start, lip syncs with audio CTA
+    clips.append({
+        "asset": {
+            "type":   "video",
+            "src":    avatar_video_url,
+            "trim":   cta_start,
+            "volume": 0,
+        },
+        "start":  cta_start,
+        "length": cta_len,
+        "transition": {
+            "in":  theme["avatar_in"],
+            "out": "fade",
+        },
+    })
+
+    # Car photo slideshow
+    for i, (url, start) in enumerate(zip(photos, photo_starts)):
+        clips.append(_make_photo_clip(url, start, photo_len, i))
+
+    # Feature text overlays (first 3 photos)
+    for i, (text, start) in enumerate(zip(highlights, photo_starts[:3])):
+        clips.append({
+            "asset": {
+                "type":   "html",
+                "html":   _feature_text_html(text, brand_color),
+                "width":  800,
+                "height": 120,
+            },
+            "position": "bottomLeft",
+            "offset":   {"x": 0.0, "y": 0.08},
+            "start":    start + 0.5,
+            "length":   photo_len - 1.0,
+            "transition": {"in": "slideRight", "out": "fade"},
+        })
+
+    # Vehicle name across photo section
+    clips.append({
+        "asset": {
+            "type":   "html",
+            "html":   _vehicle_name_html(vehicle_summary),
+            "width":  700,
+            "height": 60,
+        },
+        "position": "topLeft",
+        "offset":   {"x": 0.02, "y": -0.42},
+        "start":    photo_start,
+        "length":   photo_section,
+        "transition": {"in": "fade", "out": "fade"},
+    })
+
+    # Dealership lower third during CTA
+    clips.append({
+        "asset": {
+            "type":   "html",
+            "html":   _dealership_html(dealership_name, brand_color),
+            "width":  500,
+            "height": 80,
+        },
+        "position": "bottomLeft",
+        "offset":   {"x": 0.0, "y": 0.05},
+        "start":    cta_start + 1.0,
+        "length":   cta_len - 1.5,
+        "transition": {"in": "slideRight", "out": "fade"},
+    })
+
+    return {
+        "timeline": {
+            "background": "#000000",
+            "tracks":     [{"clips": clips}],
+        },
+        "output": {
+            "format":     "mp4",
+            "resolution": "hd",
+            "fps":        30,
+            "quality":    "high",
+        },
+    }
+
+
+# ── Format 2: Slideshow only (free) ──────────────────────────
+def build_ad_timeline_photo_only(
+    audio_url: str,
+    car_photo_urls: list[str],
+    dealership_name: str,
+    vehicle_summary: str,
+    feature_highlights: list[str],
+    duration: float = 24.5,
+    brand_color: str = DEFAULT_BRAND_COLOR,
+) -> dict:
+    """
+    Free ad: polished photo slideshow with audio, no avatar.
+    5 exterior + 2 interior photos with smooth motion effects.
+    """
+    # Cap at 7 photos, minimum 3s each
+    max_photos  = min(7, max(3, int(duration / 3.0)))
+    photos      = list(car_photo_urls[:max_photos])
     while len(photos) < 1:
         photos.append(photos[-1] if photos else "")
 
@@ -172,133 +294,79 @@ def build_ad_timeline(
     while len(highlights) < 3:
         highlights.append(dealership_name)
 
-    # ── Timing ────────────────────────────────────────────────
-    hook_len         = round(duration * hook_pct, 2)
-    cta_len          = round(duration * cta_pct, 2)
-    photo_section    = round(duration - hook_len - cta_len, 2)
-    num_photos       = len(photos)
-    photo_len        = round(photo_section / num_photos, 2)
-
-    hook_start       = 0
-    photo_start      = hook_len
-    cta_start        = duration - cta_len
-
-    photo_starts     = [
-        round(photo_start + (i * photo_len), 2)
-        for i in range(num_photos)
-    ]
+    num_photos   = len(photos)
+    photo_len    = round(duration / num_photos, 2)
+    photo_starts = [round(i * photo_len, 2) for i in range(num_photos)]
 
     clips = []
 
-    # ── ElevenLabs audio: full duration, single source ────────
-    # This is the ONLY audio in the video.
-    # Avatar is muted so we never get double audio.
+    # Audio — full duration
     clips.append({
-        "asset": {
-            "type": "audio",
-            "src": audio_url,
-            "volume": 1,
-        },
-        "start": 0,
+        "asset": {"type": "audio", "src": audio_url, "volume": 1},
+        "start":  0,
         "length": duration,
     })
 
-    # ── Avatar: hook section ──────────────────────────────────
-    # trim=0 → starts from beginning of avatar video
-    # Lip sync: audio seconds 0→hook_len, avatar seconds 0→hook_len ✅
-    clips.append({
-        "asset": {
-            "type": "video",
-            "src": avatar_video_url,
-            "trim": 0,
-            "volume": 0,   # muted — audio handled above
-        },
-        "start": hook_start,
-        "length": hook_len,
-        "transition": {
-            "in": theme["avatar_in"],
-            "out": theme["avatar_out"],
-        },
-    })
+    # Car photo slideshow
+    for i, (url, start) in enumerate(zip(photos, photo_starts)):
+        clips.append(_make_photo_clip(url, start, photo_len, i))
 
-    # ── Avatar: CTA section ───────────────────────────────────
-    # trim=cta_start → shows avatar mouth movements for the CTA words
-    # Lip sync: audio seconds cta_start→end, avatar trimmed to same point ✅
-    clips.append({
-        "asset": {
-            "type": "video",
-            "src": avatar_video_url,
-            "trim": cta_start,
-            "volume": 0,   # muted — audio handled above
-        },
-        "start": cta_start,
-        "length": cta_len,
-        "transition": {
-            "in": theme["avatar_in"],
-            "out": "fade",
-        },
-    })
-
-    # ── Car photo slideshow (walkaround motion) ───────────────
-    for i, (photo_url, start) in enumerate(zip(photos, photo_starts)):
-        clips.append(_make_photo_clip(photo_url, start, photo_len, i))
-
-    # ── Feature text overlays (one per photo) ─────────────────
-    for text, start in zip(highlights, photo_starts):
+    # Feature text overlays (first 3 photos)
+    for i, (text, start) in enumerate(zip(highlights, photo_starts[:3])):
         clips.append({
             "asset": {
-                "type": "html",
-                "html": _feature_text_html(text, brand_color),
-                "width": 800,
+                "type":   "html",
+                "html":   _feature_text_html(text, brand_color),
+                "width":  800,
                 "height": 120,
             },
             "position": "bottomLeft",
-            "offset": {"x": 0.0, "y": 0.08},
-            "start": start + 0.5,
-            "length": photo_len - 1.0,
+            "offset":   {"x": 0.0, "y": 0.08},
+            "start":    start + 0.5,
+            "length":   photo_len - 1.0,
             "transition": {"in": "slideRight", "out": "fade"},
         })
 
-    # ── Vehicle name across photo section ─────────────────────
+    # Vehicle name — full duration
     clips.append({
         "asset": {
-            "type": "html",
-            "html": _vehicle_name_html(vehicle_summary),
-            "width": 700,
+            "type":   "html",
+            "html":   _vehicle_name_html(vehicle_summary),
+            "width":  700,
             "height": 60,
         },
         "position": "topLeft",
-        "offset": {"x": 0.02, "y": -0.42},
-        "start": photo_start,
-        "length": photo_section,
+        "offset":   {"x": 0.02, "y": -0.42},
+        "start":    0,
+        "length":   duration,
         "transition": {"in": "fade", "out": "fade"},
     })
 
-    # ── Dealership lower third (during CTA) ───────────────────
+    # Dealership lower third — last 4 seconds
     clips.append({
         "asset": {
-            "type": "html",
-            "html": _dealership_html(dealership_name, brand_color),
-            "width": 500,
+            "type":   "html",
+            "html":   _dealership_html(dealership_name, brand_color),
+            "width":  500,
             "height": 80,
         },
         "position": "bottomLeft",
-        "offset": {"x": 0.0, "y": 0.05},
-        "start": cta_start + 1.0,
-        "length": cta_len - 1.5,
+        "offset":   {"x": 0.0, "y": 0.05},
+        "start":    duration - 4.0,
+        "length":   3.5,
         "transition": {"in": "slideRight", "out": "fade"},
     })
 
     return {
         "timeline": {
             "background": "#000000",
-            "tracks": [{"clips": clips}],
+            "tracks":     [{"clips": clips}],
         },
         "output": {
-            "format": "mp4",
+            "format":     "mp4",
             "resolution": "hd",
-            "fps": 25,
-            "quality": "medium",
+            "fps":        30,
+            "quality":    "high",
         },
     }
 
@@ -340,8 +408,8 @@ async def get_render_status(render_id: str) -> dict:
         data = response.json().get("response", {})
         return {
             "status": data.get("status", "unknown"),
-            "url": data.get("url"),
-            "error": data.get("error"),
+            "url":    data.get("url"),
+            "error":  data.get("error"),
         }
 
 

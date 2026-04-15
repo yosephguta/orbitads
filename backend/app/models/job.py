@@ -41,6 +41,9 @@ class Job(SQLModel, table=True):
     # The creative direction for the ad — e.g. "family", "outdoorsy"
     theme: str = Field(max_length=100)
 
+    # Record Video Type
+    video_type: str = Field(default="walkaround", max_length=50)
+
     # S3 keys for the salesperson's uploaded assets.
     # We store the S3 key (the file path in the bucket), not the full URL.
     # Full URLs are generated on demand using presigned URLs.
@@ -113,6 +116,7 @@ class JobCreate(SQLModel):
     photos_s3_keys: Optional[str] = None
     voice_s3_key: Optional[str] = None
     car_photo_urls: Optional[str] = None   # JSON array of car photo URLs
+    video_type: str = "walkaround"
 
 
 # ── API: Job response ─────────────────────────────────────────

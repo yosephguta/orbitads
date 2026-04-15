@@ -18,6 +18,7 @@ from app.services.voice_clone import text_to_speech
 from app.services.avatar import submit_video, wait_for_video, download_video
 from app.services.video_assembler import (
     build_ad_timeline,
+    build_ad_timeline_photo_only,
     submit_render,
     wait_for_render,
     download_render,
@@ -75,7 +76,7 @@ async def _run_pipeline(job_id: int, user_id: int):
         if not job or not user:
             return
 
-        # ── Stage 1: VIN decode ───────────────────────────────
+       # ── Stage 1: VIN decode ───────────────────────────────
         await _update_job(session, job,
             status=JobStatus.VIN_DECODING,
             progress_pct=10,
@@ -87,12 +88,13 @@ async def _run_pipeline(job_id: int, user_id: int):
                 progress_pct=30,
             )
         except Exception as e:
+            print(f"VIN decode failed (non-fatal): {e}")
+            # Continue with empty vehicle data — we have year/make/model from scraper
+            vehicle_data = {}
             await _update_job(session, job,
-                status=JobStatus.FAILED,
-                error_message=f"VIN decode failed: {e}",
-                completed_at=datetime.now(timezone.utc),
+                vehicle_data=json.dumps(vehicle_data),
+                progress_pct=30,
             )
-            return
 
         # ── Stage 2: Script generation ────────────────────────
         await _update_job(session, job,
@@ -142,9 +144,9 @@ async def _run_pipeline(job_id: int, user_id: int):
                 )
                 return
 
-        # ── Stage 4: Avatar generation ────────────────────────
+      # ── Stage 4: Avatar generation (premium only) ─────────────────
         avatar_s3_key = None
-        if user.heygen_avatar_id and audio_s3_key:
+        if job.video_type == "avatar" and user.heygen_avatar_id and audio_s3_key:
             await _update_job(session, job,
                 status=JobStatus.AVATAR_GENERATING,
                 progress_pct=70,
@@ -174,84 +176,86 @@ async def _run_pipeline(job_id: int, user_id: int):
                     completed_at=datetime.now(timezone.utc),
                 )
                 return
+        else:
+            # Walkaround only — skip avatar
+            await _update_job(session, job, progress_pct=80)
 
-        # ── Stage 5: Video assembly ───────────────────────────
-        if avatar_s3_key and audio_s3_key:
+        # ── Stage 5: Video assembly ────────────────────────────────────
+        print(f"Stage 5 — video_type: {job.video_type}, audio_s3_key: {audio_s3_key}")
+        if audio_s3_key:
             await _update_job(session, job,
                 status=JobStatus.ASSEMBLING,
                 progress_pct=85,
             )
             try:
-                # Public URLs for Shotstack to access
-                avatar_url = (
-                    f"https://{settings.s3_bucket_name}.s3."
-                    f"{settings.aws_region}.amazonaws.com/{avatar_s3_key}"
-                )
                 audio_url = (
                     f"https://{settings.s3_bucket_name}.s3."
                     f"{settings.aws_region}.amazonaws.com/{audio_s3_key}"
                 )
-
-                # Get actual audio duration for precise timing
                 audio_duration = get_audio_duration(audio_s3_key)
 
-                # Get car photos from job or use defaults
-                # Get reviewed photos from job
-                raw_photos = DEFAULT_CAR_PHOTOS
+                # Get reviewed photos
+                car_photos = DEFAULT_CAR_PHOTOS
                 if job.car_photo_urls:
                     try:
-                        raw_photos = json.loads(job.car_photo_urls)
+                        car_photos = json.loads(job.car_photo_urls)
                     except Exception:
-                        raw_photos = DEFAULT_CAR_PHOTOS
+                        car_photos = DEFAULT_CAR_PHOTOS
 
-                # Apply walkaround classification and ordering
-                await _update_job(session, job,
-                    progress_pct=82,
-                )
+                # Apply walkaround ordering
                 try:
                     from app.services.photo_classifier import get_walkaround_photos
                     car_photos = await get_walkaround_photos(
-                        photo_urls=raw_photos,
+                        photo_urls=car_photos,
                         exterior_count=5,
                         interior_count=2,
                     )
-                    print(f"Walkaround photos selected: {len(car_photos)}")
+                    print(f"Walkaround photos: {len(car_photos)}")
                 except Exception as e:
-                    print(f"Walkaround ordering failed, using raw photos: {e}")
-                    car_photos = raw_photos[:7]
+                    print(f"Walkaround ordering failed: {e}")
+                    car_photos = car_photos[:7]
 
-                # Build feature highlights from vehicle data
                 vd = json.loads(job.vehicle_data) if job.vehicle_data else {}
                 highlights = _build_highlights(vd, user.dealership_name)
-
-                # Build vehicle summary line
                 from app.services.vin_decoder import vehicle_summary
                 v_summary = vehicle_summary(vd) if vd else "Visit us today"
 
-                # Build and submit the Shotstack timeline
-                timeline = build_ad_timeline(
-                    avatar_video_url=avatar_url,
-                    audio_url=audio_url,
-                    car_photo_urls=car_photos,
-                    dealership_name=user.dealership_name,
-                    vehicle_summary=v_summary,
-                    feature_highlights=highlights,
-                    duration=audio_duration,
-                    hook_pct=0.15,
-                    cta_pct=0.15,
-                    transition_style="dynamic",
-                    brand_color="#C4122F",
-                )
+                # Branch: avatar+walkaround vs walkaround only
+                if job.video_type == "avatar" and avatar_s3_key:
+                    avatar_url = (
+                        f"https://{settings.s3_bucket_name}.s3."
+                        f"{settings.aws_region}.amazonaws.com/{avatar_s3_key}"
+                    )
+                    timeline = build_ad_timeline(
+                        avatar_video_url=avatar_url,
+                        audio_url=audio_url,
+                        car_photo_urls=car_photos,
+                        dealership_name=user.dealership_name,
+                        vehicle_summary=v_summary,
+                        feature_highlights=highlights,
+                        duration=audio_duration,
+                        hook_pct=0.15,
+                        cta_pct=0.15,
+                        transition_style="dynamic",
+                        brand_color="#C4122F",
+                    )
+                else:
+                    # Walkaround only
+                    timeline = build_ad_timeline_photo_only(
+                        audio_url=audio_url,
+                        car_photo_urls=car_photos,
+                        dealership_name=user.dealership_name,
+                        vehicle_summary=v_summary,
+                        feature_highlights=highlights,
+                        duration=audio_duration,
+                        brand_color="#C4122F",
+                    )
 
                 render_id = await submit_render(timeline)
                 final_video_url = await wait_for_render(render_id)
-
-                # Download and save final video to S3
                 final_bytes = await download_render(final_video_url)
                 final_key = make_final_video_key(job.id)
                 upload_bytes(final_bytes, final_key, "video/mp4")
-
-                # Generate presigned URL for frontend
                 presigned_url = create_presigned_download_url(final_key)
 
                 await _update_job(session, job,
@@ -317,15 +321,16 @@ async def create_job(
         )
 
     job = Job(
-        user_id=current_user.id,
-        vin=payload.vin,
-        listing_url=payload.listing_url,
-        theme=payload.theme,
-        photos_s3_keys=payload.photos_s3_keys,
-        voice_s3_key=payload.voice_s3_key,
-        car_photo_urls=payload.car_photo_urls,
-        status=JobStatus.PENDING,
-        progress_pct=0,
+    user_id=current_user.id,
+    vin=payload.vin,
+    listing_url=payload.listing_url,
+    theme=payload.theme,
+    video_type=payload.video_type,    # ← add this
+    photos_s3_keys=payload.photos_s3_keys,
+    voice_s3_key=payload.voice_s3_key,
+    car_photo_urls=payload.car_photo_urls,
+    status=JobStatus.PENDING,
+    progress_pct=0,
     )
     session.add(job)
     await session.commit()
