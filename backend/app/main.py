@@ -6,6 +6,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.core.config import get_settings
 from app.core.database import create_db_and_tables
 
+
+
 settings = get_settings()
 
 
@@ -50,14 +52,14 @@ app.add_middleware(
 
 
 # ── Routes ────────────────────────────────────────────────────
-# We'll uncomment these one by one as we build each route file.
-# They're listed here now so you can see the full picture.
+# ── Routes ────────────────────────────────────────────────────
+from app.api.routes import auth, jobs, uploads, photos, listings
 
-from app.api.routes import auth, jobs, uploads, photos
-app.include_router(auth.router,    prefix="/api/v1")
-app.include_router(uploads.router, prefix="/api/v1")
-app.include_router(jobs.router,    prefix="/api/v1")
-app.include_router(photos.router, prefix="/api/v1")
+app.include_router(auth.router,     prefix="/api/v1")
+app.include_router(uploads.router,  prefix="/api/v1")
+app.include_router(jobs.router,     prefix="/api/v1")
+app.include_router(photos.router,   prefix="/api/v1")
+app.include_router(listings.router, prefix="/api/v1")
 
 
 # ── Health check ──────────────────────────────────────────────
@@ -66,5 +68,3 @@ app.include_router(photos.router, prefix="/api/v1")
 @app.get("/health", tags=["infra"])
 async def health():
     return {"status": "ok", "version": settings.app_version}
-
-

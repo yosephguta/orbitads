@@ -3,6 +3,7 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 from sqlmodel import SQLModel
 
 from app.core.config import get_settings
+from app.models.listing import Listing  # noqa
 
 settings = get_settings()
 
