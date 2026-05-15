@@ -14,6 +14,7 @@ class UserBase(SQLModel):
     is_active: bool = Field(default=True)
     elevenlabs_voice_id: Optional[str] = Field(default=None, max_length=255)
     heygen_avatar_id: Optional[str] = Field(default=None, max_length=255)
+    phone_number: Optional[str] = Field(default=None, max_length=20)
 
 
 # ── Database table ────────────────────────────────────────────

@@ -94,28 +94,26 @@ async def generate_listing(
     mileage_str = payload.mileage or "Contact for mileage"
     dealer      = payload.dealership_name or current_user.dealership_name or "Our Dealership"
 
-    prompt = f"""Write a Facebook Marketplace vehicle listing for a dealership salesperson.
+    prompt = f"""Write a Facebook Marketplace vehicle listing for a car salesperson selling personally.
 
 Vehicle: {vehicle_info}
 Price: {price_clean}
 Mileage: {mileage_str}
 VIN: {payload.vin or 'Available on request'}
-Dealership: {dealer}
-{f"Original listing: {payload.listing_url}" if payload.listing_url else ""}
 
 Requirements:
-- Title: max 100 chars, format "Year Make Model Trim - $Price - Dealership"
-- Description: 200-300 words, conversational tone
-  * Opening hook (why this is a great deal)
-  * Key features with emojis as bullet points
+- Title: max 100 chars — "Year Make Model Trim - $Price"  (NO dealership name)
+- Description: 200-300 words, conversational and personal tone
+  * Opening hook about why this car is great
+  * Key features with emojis as bullet points  
   * Brief condition note
-  * Call to action mentioning the dealership name
-  * Mention financing options are available through the dealership
-- Tags: 6-8 relevant tags (make, model, year, body style, price range, features)
-- Write as if the salesperson is posting personally, not as a business ad
-- Keep it genuine and conversational, not overly sales-y
+  * Call to action: "Send me a message" or "DM me" — NOT "visit our dealership"
+  * End with: "Message me on Facebook for more info or to schedule a test drive!"
+- Tags: 6-8 relevant tags
+- Write as if YOU are the seller — personal, direct, no dealership language
+- NEVER mention a dealership name, "come in", "visit us", or "our lot"
 
-Respond with ONLY valid JSON, no markdown:
+Respond with ONLY valid JSON:
 {{"title": "...", "description": "...", "tags": ["...", "..."]}}"""
 
     message = await _client.messages.create(

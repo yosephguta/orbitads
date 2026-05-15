@@ -75,10 +75,6 @@ async def generate_ad_script(
     # Build the vehicle summary line Claude will see
     v_summary = vehicle_summary(vehicle_data)
 
-    # Build optional context lines
-    sp_line = f"The salesperson's name is {salesperson_name}." if salesperson_name else ""
-    dealer_line = f"The dealership is {dealership_name}." if dealership_name else ""
-
     # ── System prompt ─────────────────────────────────────────
     # Sets Claude's role and the rules it must follow
     system_prompt = """You are an expert automotive advertising copywriter specializing in 
@@ -86,27 +82,33 @@ dealership video ads. You write natural, conversational scripts that sound like 
 person talking — not a corporate announcement. Your scripts are punchy, benefit-focused, 
 and always end with a clear call to action."""
 
+# Build optional context lines
+    sp_line = f"The salesperson's name is {salesperson_name}." if salesperson_name else ""
+    # Remove dealer_line entirely — no dealership mentions
+
     # ── User prompt ───────────────────────────────────────────
-    # The actual request — includes all the context Claude needs
-    user_prompt = f"""Write a 30-second video ad script for a car dealership salesperson.
+    user_prompt = f"""Write a 30-second video ad script for a car salesperson posting on social media.
 
 VEHICLE: {v_summary}
 THEME: {theme} — focus on: {guidance}
 {sp_line}
-{dealer_line}
 
 RULES:
 - The salesperson speaks directly to camera in first person
-- Natural and conversational — sounds like a real person, not an ad agency
-- Total length: 70-80 words (this fits exactly 30 seconds at a natural speaking pace)
+- Natural and conversational — sounds like a real person, not an ad
+- Total length: 70-80 words (fits exactly 30 seconds at natural speaking pace)
 - No filler phrases like "look no further" or "don't miss out"
 - The hook must grab attention in the first 3 seconds
+- NEVER mention the dealership name
+- NEVER say "come visit us", "stop by", "our dealership", or "our lot"
+- The CTA must always be: "Send me a message" or "DM me" or "Message me today"
+- End with something like: "Message me today and let's make a deal!"
 
 Return ONLY a JSON object with these exact keys. No markdown, no explanation, just the JSON:
 {{
     "hook": "One punchy opening sentence that immediately grabs attention (10-15 words)",
     "body": "Two or three sentences covering the key benefits that match the theme",
-    "cta": "One closing sentence with a clear next step and the dealership name",
+    "cta": "One closing sentence ending with a message/DM call to action — no dealership name",
     "full_script": "The hook, body, and cta combined into one natural flowing paragraph"
 }}"""
 

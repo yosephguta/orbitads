@@ -23,8 +23,8 @@ from app.core.config import get_settings
 
 settings = get_settings()
 
-SHOTSTACK_URL        = "https://api.shotstack.io/stage/render"
-SHOTSTACK_STATUS_URL = "https://api.shotstack.io/stage/render/{render_id}"
+SHOTSTACK_URL        = "https://api.shotstack.io/v1/render"
+SHOTSTACK_STATUS_URL = "https://api.shotstack.io/v1/render/{render_id}"
 
 DEFAULT_BRAND_COLOR  = "#C4122F"
 
@@ -80,30 +80,33 @@ def _feature_text_html(text: str, brand_color: str = DEFAULT_BRAND_COLOR) -> str
     ">{text}</p>"""
 
 
-def _dealership_html(dealership_name: str, brand_color: str = DEFAULT_BRAND_COLOR) -> str:
+def _dealership_html(cta_text: str = "💬 Message Me Today", brand_color: str = DEFAULT_BRAND_COLOR) -> str:
     return f"""<p style="
         font-family: 'Open Sans', sans-serif;
-        font-size: 28px;
-        font-weight: 600;
+        font-size: 26px;
+        font-weight: 700;
         color: #ffffff;
-        background: {brand_color};
-        padding: 10px 28px;
-        border-radius: 4px;
-        letter-spacing: 1px;
-        text-transform: uppercase;
-    ">{dealership_name}</p>"""
+        background: rgba(0,0,0,0.85);
+        padding: 10px 24px;
+        margin: 0;
+        display: block;
+        white-space: nowrap;
+    ">{cta_text}</p>"""
 
 
 def _vehicle_name_html(vehicle_summary: str) -> str:
+    display = vehicle_summary[:40] + "…" if len(vehicle_summary) > 40 else vehicle_summary
     return f"""<p style="
         font-family: 'Open Sans', sans-serif;
-        font-size: 22px;
-        font-weight: 400;
+        font-size: 28px;
+        font-weight: 800;
         color: #ffffff;
-        background: rgba(0,0,0,0.55);
-        padding: 6px 18px;
-        border-radius: 4px;
-    ">{vehicle_summary}</p>"""
+        background: rgba(0,0,0,0.85);
+        padding: 10px 20px;
+        margin: 0;
+        display: block;
+        white-space: nowrap;
+    ">{display}</p>"""
 
 
 # ── Photo clip builder ────────────────────────────────────────
@@ -210,51 +213,65 @@ def build_ad_timeline(
     for i, (url, start) in enumerate(zip(photos, photo_starts)):
         clips.append(_make_photo_clip(url, start, photo_len, i))
 
-    # Feature text overlays (first 3 photos)
-    for i, (text, start) in enumerate(zip(highlights, photo_starts[:3])):
+      # ── Vehicle name — static top left ────────────────────────
         clips.append({
             "asset": {
                 "type":   "html",
-                "html":   _feature_text_html(text, brand_color),
-                "width":  800,
-                "height": 120,
+                "html":   f'<p style="font-family:Open Sans,sans-serif;font-size:26px;font-weight:700;color:#fff;background:rgba(0,0,0,0.8);padding:8px 16px;margin:0;white-space:nowrap">{vehicle_summary[:40]}</p>',
+                "width":  600,
+                "height": 60,
+                "css":    "",
             },
-            "position": "bottomLeft",
-            "offset":   {"x": 0.0, "y": 0.08},
-            "start":    start + 0.5,
-            "length":   photo_len - 1.0,
-            "transition": {"in": "slideRight", "out": "fade"},
+            "position": "topLeft",
+            "offset":   {"x": 0.0, "y": 0.0},
+            "start":    0,
+            "length":   duration,
         })
 
-    # Vehicle name across photo section
-    clips.append({
-        "asset": {
-            "type":   "html",
-            "html":   _vehicle_name_html(vehicle_summary),
-            "width":  700,
-            "height": 60,
-        },
-        "position": "topLeft",
-        "offset":   {"x": 0.02, "y": -0.42},
-        "start":    photo_start,
-        "length":   photo_section,
-        "transition": {"in": "fade", "out": "fade"},
-    })
+        # ── CTA — static bottom left ───────────────────────────────
+        clips.append({
+            "asset": {
+                "type":   "html",
+                "html":   '<p style="font-family:Open Sans,sans-serif;font-size:24px;font-weight:700;color:#fff;background:rgba(0,0,0,0.8);padding:8px 16px;margin:0;white-space:nowrap">&#x1F4AC; Message Me Today</p>',
+                "width":  500,
+                "height": 60,
+                "css":    "",
+            },
+            "position": "bottomLeft",
+            "offset":   {"x": 0.0, "y": 0.0},
+            "start":    0,
+            "length":   duration,
+        })
 
-    # Dealership lower third during CTA
-    clips.append({
-        "asset": {
-            "type":   "html",
-            "html":   _dealership_html(dealership_name, brand_color),
-            "width":  500,
-            "height": 80,
-        },
-        "position": "bottomLeft",
-        "offset":   {"x": 0.0, "y": 0.05},
-        "start":    cta_start + 1.0,
-        "length":   cta_len - 1.5,
-        "transition": {"in": "slideRight", "out": "fade"},
-    })
+       # ── Vehicle name — static top left ────────────────────────
+        clips.append({
+            "asset": {
+                "type":   "html",
+                "html":   f'<p style="font-family:Open Sans,sans-serif;font-size:26px;font-weight:700;color:#fff;background:rgba(0,0,0,0.8);padding:8px 16px;margin:0;white-space:nowrap">{vehicle_summary[:40]}</p>',
+                "width":  600,
+                "height": 60,
+                "css":    "",
+            },
+            "position": "topLeft",
+            "offset":   {"x": 0.0, "y": 0.0},
+            "start":    0,
+            "length":   duration,
+        })
+
+        # ── CTA — static bottom left ───────────────────────────────
+        clips.append({
+            "asset": {
+                "type":   "html",
+                "html":   '<p style="font-family:Open Sans,sans-serif;font-size:24px;font-weight:700;color:#fff;background:rgba(0,0,0,0.8);padding:8px 16px;margin:0;white-space:nowrap">&#x1F4AC; Message Me Today</p>',
+                "width":  500,
+                "height": 60,
+                "css":    "",
+            },
+            "position": "bottomLeft",
+            "offset":   {"x": 0.0, "y": 0.0},
+            "start":    0,
+            "length":   duration,
+        })
 
     return {
         "timeline": {
@@ -311,51 +328,65 @@ def build_ad_timeline_photo_only(
     for i, (url, start) in enumerate(zip(photos, photo_starts)):
         clips.append(_make_photo_clip(url, start, photo_len, i))
 
-    # Feature text overlays (first 3 photos)
-    for i, (text, start) in enumerate(zip(highlights, photo_starts[:3])):
+    # ── Vehicle name — static top left ────────────────────────
         clips.append({
             "asset": {
                 "type":   "html",
-                "html":   _feature_text_html(text, brand_color),
-                "width":  800,
-                "height": 120,
+                "html":   f'<p style="font-family:Open Sans,sans-serif;font-size:26px;font-weight:700;color:#fff;background:rgba(0,0,0,0.8);padding:8px 16px;margin:0;white-space:nowrap">{vehicle_summary[:40]}</p>',
+                "width":  600,
+                "height": 60,
+                "css":    "",
             },
-            "position": "bottomLeft",
-            "offset":   {"x": 0.0, "y": 0.08},
-            "start":    start + 0.5,
-            "length":   photo_len - 1.0,
-            "transition": {"in": "slideRight", "out": "fade"},
+            "position": "topLeft",
+            "offset":   {"x": 0.0, "y": 0.0},
+            "start":    0,
+            "length":   duration,
         })
 
-    # Vehicle name — full duration
-    clips.append({
-        "asset": {
-            "type":   "html",
-            "html":   _vehicle_name_html(vehicle_summary),
-            "width":  700,
-            "height": 60,
-        },
-        "position": "topLeft",
-        "offset":   {"x": 0.02, "y": -0.42},
-        "start":    0,
-        "length":   duration,
-        "transition": {"in": "fade", "out": "fade"},
-    })
+        # ── CTA — static bottom left ───────────────────────────────
+        clips.append({
+            "asset": {
+                "type":   "html",
+                "html":   '<p style="font-family:Open Sans,sans-serif;font-size:24px;font-weight:700;color:#fff;background:rgba(0,0,0,0.8);padding:8px 16px;margin:0;white-space:nowrap">&#x1F4AC; Message Me Today</p>',
+                "width":  500,
+                "height": 60,
+                "css":    "",
+            },
+            "position": "bottomLeft",
+            "offset":   {"x": 0.0, "y": 0.0},
+            "start":    0,
+            "length":   duration,
+        })
 
-    # Dealership lower third — last 4 seconds
-    clips.append({
-        "asset": {
-            "type":   "html",
-            "html":   _dealership_html(dealership_name, brand_color),
-            "width":  500,
-            "height": 80,
-        },
-        "position": "bottomLeft",
-        "offset":   {"x": 0.0, "y": 0.05},
-        "start":    duration - 4.0,
-        "length":   3.5,
-        "transition": {"in": "slideRight", "out": "fade"},
-    })
+            # ── Vehicle name — static top left ────────────────────────
+        clips.append({
+            "asset": {
+                "type":   "html",
+                "html":   f'<p style="font-family:Open Sans,sans-serif;font-size:26px;font-weight:700;color:#fff;background:rgba(0,0,0,0.8);padding:8px 16px;margin:0;white-space:nowrap">{vehicle_summary[:40]}</p>',
+                "width":  600,
+                "height": 60,
+                "css":    "",
+            },
+            "position": "topLeft",
+            "offset":   {"x": 0.0, "y": 0.0},
+            "start":    0,
+            "length":   duration,
+        })
+
+        # ── CTA — static bottom left ───────────────────────────────
+        clips.append({
+            "asset": {
+                "type":   "html",
+                "html":   '<p style="font-family:Open Sans,sans-serif;font-size:24px;font-weight:700;color:#fff;background:rgba(0,0,0,0.8);padding:8px 16px;margin:0;white-space:nowrap">&#x1F4AC; Message Me Today</p>',
+                "width":  500,
+                "height": 60,
+                "css":    "",
+            },
+            "position": "bottomLeft",
+            "offset":   {"x": 0.0, "y": 0.0},
+            "start":    0,
+            "length":   duration,
+        })
 
     return {
         "timeline": {

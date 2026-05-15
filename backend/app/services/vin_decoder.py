@@ -140,34 +140,18 @@ def _build_engine_string(
 
 
 def vehicle_summary(vd: dict) -> str:
-    """
-    Returns a short one-line description of the vehicle.
-    Used in Claude's prompt so it knows what car it's writing about.
+    """Return a short clean vehicle name for video overlays."""
+    year  = vd.get("year", "")
+    make  = vd.get("make", "").title()
+    model = vd.get("model", "")
+    trim  = vd.get("trim", "")
 
-    Example: "2024 Kia Telluride SX SUV — 3.8L V6, AWD, Gasoline"
-    """
-    # Build the name part: "2024 Kia Telluride SX SUV"
-    name_parts = [
-        vd.get("year", ""),
-        vd.get("make", ""),
-        vd.get("model", ""),
-    ]
-    name = " ".join(p for p in name_parts if p)
+    # Build short summary — max ~40 chars for overlay
+    parts = [year, make, model]
+    summary = " ".join(filter(None, parts))
 
-    if vd.get("trim"):
-        name += f" {vd['trim']}"
-    if vd.get("body_style"):
-        name += f" {vd['body_style']}"
+    # Add trim only if it fits
+    if trim and len(summary) + len(trim) < 35:
+        summary = f"{summary} {trim}"
 
-    # Build the specs part: "3.8L V6, AWD, Gasoline"
-    spec_parts = []
-    if vd.get("engine"):
-        spec_parts.append(vd["engine"])
-    if vd.get("drivetrain"):
-        spec_parts.append(vd["drivetrain"])
-    if vd.get("fuel_type"):
-        spec_parts.append(vd["fuel_type"])
-
-    if spec_parts:
-        return f"{name} — {', '.join(spec_parts)}"
-    return name
+    return summary or "Call or Text Today!!!"

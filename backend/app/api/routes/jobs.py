@@ -106,7 +106,7 @@ async def _run_pipeline(job_id: int, user_id: int):
                 vehicle_data=vehicle_data,
                 theme=job.theme,
                 salesperson_name=user.full_name,
-                dealership_name=user.dealership_name,
+                dealership_name=None,
             )
             await _update_job(session, job,
                 generated_script=json.dumps(script),
@@ -280,25 +280,52 @@ async def _run_pipeline(job_id: int, user_id: int):
         )
 
 
-def _build_highlights(vehicle_data: dict, dealership_name: str) -> list[str]:
-    """
-    Build 3 feature highlight strings from vehicle data.
-    These appear as text overlays during the car photo section.
-    """
+def _build_highlights(vd: dict, dealership_name: str) -> list[str]:
     highlights = []
 
-    if vehicle_data.get("trim"):
-        highlights.append(f"{vehicle_data['trim']} Trim")
-    if vehicle_data.get("engine"):
-        highlights.append(f"{vehicle_data['engine']} Engine")
-    if vehicle_data.get("fuel_type"):
-        highlights.append(f"{vehicle_data['fuel_type']}")
+    # Drivetrain
+    drive = vd.get("drivetrain") or ""
+    if drive:
+        if "all-wheel" in drive.lower() or "awd" in drive.lower():
+            highlights.append("All-Wheel Drive")
+        elif "4wd" in drive.lower() or "four-wheel" in drive.lower():
+            highlights.append("4-Wheel Drive")
+        elif "rear" in drive.lower() or "rwd" in drive.lower():
+            highlights.append("Rear-Wheel Drive")
+        else:
+            highlights.append(drive)
 
-    # Pad with dealership name if we don't have enough
+    # Engine
+    engine = vd.get("engine") or ""
+    if engine:
+        highlights.append(engine)
+
+    # Transmission
+    transmission = vd.get("transmission") or ""
+    if transmission and "automatic" in transmission.lower():
+        highlights.append("Automatic Transmission")
+    elif transmission and "manual" in transmission.lower():
+        highlights.append("Manual Transmission")
+
+    # Body style
+    body = vd.get("body_style") or ""
+    if body and len(highlights) < 3:
+        highlights.append(body)
+
+    # Fuel type — only if electric or hybrid (skip gasoline, too generic)
+    fuel = vd.get("fuel_type") or ""
+    if fuel and len(highlights) < 3:
+        if "electric" in fuel.lower():
+            highlights.append("Electric Vehicle")
+        elif "hybrid" in fuel.lower():
+            highlights.append("Hybrid")
+
+    # Pad to 3 with dealership name
+    highlights = highlights[:3]
     while len(highlights) < 3:
-        highlights.append(f"Visit {dealership_name}")
+        highlights.append(dealership_name)
 
-    return highlights[:3]
+    return highlights
 
 
 # ── Create job ────────────────────────────────────────────────
