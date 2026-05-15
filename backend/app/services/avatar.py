@@ -61,32 +61,29 @@ async def submit_video(
     # Build the video generation payload
     # HeyGen v2 API uses a "clips" array where each clip is one scene
     payload = {
-        "video_inputs": [
-            {
-                "character": {
-                    "type": "talking_photo",
-                    "talking_photo_id": avatar_id,
-                },
-                "voice": {
-                    # Use the pre-generated audio file from ElevenLabs
-                    "type": "audio",
-                    "audio_url": audio_url,
-                },
-                "background": {
-                    # Clean white background — Shotstack will replace this
-                    "type": "color",
-                    "value": "#ffffff",
-                },
-            }
-        ],
-        "dimension": {
-            "width": width,
-            "height": height,
-        },
-        # test=True uses fewer credits during development
-        # Set to False in production for full quality
-        "test": True,
-    }
+    "video_inputs": [
+        {
+            "character": {
+                "type":    "avatar",
+                "avatar_id": avatar_id,
+                "scale":     1.0,
+            },
+            "voice": {
+                "type":      "audio",
+                "audio_url": audio_url,
+            },
+            "background": {
+                "type":  "color",
+                "value": "#ffffff",
+            },
+        }
+    ],
+    "dimension": {
+        "width":  width,
+        "height": height,
+    },
+    "test": False,  # set to False for production quality
+}
 
     async with httpx.AsyncClient(timeout=30.0) as client:
         response = await client.post(
