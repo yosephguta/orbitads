@@ -97,17 +97,19 @@ async def _run_pipeline(job_id: int, user_id: int):
             )
 
         # ── Stage 2: Script generation ────────────────────────
+        vd = vehicle_data if isinstance(vehicle_data, dict) else {}  # ← add this line
         await _update_job(session, job,
             status=JobStatus.SCRIPT_GENERATING,
             progress_pct=40,
         )
         try:
             script = await generate_ad_script(
-                vehicle_data=vehicle_data,
-                theme=job.theme,
+                vehicle_data=vd,
+                theme=job.theme or "family",    # ← must be job.theme not hardcoded
                 salesperson_name=user.full_name,
                 dealership_name=None,
             )
+
             await _update_job(session, job,
                 generated_script=json.dumps(script),
                 progress_pct=50,
