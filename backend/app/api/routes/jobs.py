@@ -144,6 +144,20 @@ async def _run_pipeline(job_id: int, user_id: int):
                     text=script["full_script"],
                     voice_id=user.elevenlabs_voice_id,
                 )
+                # Add 300ms lead-in silence for HeyGen lip sync warmup
+                try:
+                    from pydub import AudioSegment
+                    import io
+                    audio_segment = AudioSegment.from_mp3(io.BytesIO(audio_bytes))
+                    silence      = AudioSegment.silent(duration=300)
+                    padded       = silence + audio_segment
+                    buffer       = io.BytesIO()
+                    padded.export(buffer, format="mp3")
+                    audio_bytes  = buffer.getvalue()
+                    print("Added 300ms lead-in silence")
+                except Exception as e:
+                    print(f"Audio padding failed (non-fatal): {e}")
+                    
                 audio_key = make_audio_output_key(job.id)
                 upload_bytes(audio_bytes, audio_key, "audio/mpeg")
                 audio_s3_key = audio_key
@@ -268,7 +282,7 @@ async def _run_pipeline(job_id: int, user_id: int):
                 final_bytes = await download_render(final_video_url)
                 final_key = make_final_video_key(job.id)
                 upload_bytes(final_bytes, final_key, "video/mp4")
-                presigned_url = create_presigned_download_url(final_key)
+                presigned_url = create_presigned_download_url(final_key, expires_in=604800)  # 7 days
 
                 await _update_job(session, job,
                     final_video_s3_key=final_key,
