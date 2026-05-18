@@ -97,19 +97,29 @@ async def _run_pipeline(job_id: int, user_id: int):
             )
 
         # ── Stage 2: Script generation ────────────────────────
-        vd = vehicle_data if isinstance(vehicle_data, dict) else {}  # ← add this line
+        vd = vehicle_data if isinstance(vehicle_data, dict) else {}
         await _update_job(session, job,
             status=JobStatus.SCRIPT_GENERATING,
             progress_pct=40,
         )
         try:
-            script = await generate_ad_script(
-                vehicle_data=vd,
-                theme=job.theme or "family",    # ← must be job.theme not hardcoded
-                salesperson_name=user.full_name,
-                dealership_name=None,
-            )
-
+            if job.custom_script:
+                # Use the user's custom script directly
+                script = {
+                    "full_script": job.custom_script,
+                    "hook":        job.custom_script[:50],
+                    "body":        job.custom_script,
+                    "cta":         "",
+                    "theme":       "custom",
+                }
+                print(f"Using custom script: {job.custom_script[:50]}...")
+            else:
+                script = await generate_ad_script(
+                    vehicle_data=vd,
+                    theme=job.theme or "family",
+                    salesperson_name=user.full_name,
+                    dealership_name=None,
+                )
             await _update_job(session, job,
                 generated_script=json.dumps(script),
                 progress_pct=50,
@@ -338,6 +348,7 @@ async def create_job(
     current_user: Annotated[User, Depends(get_current_user)],
     session: Annotated[AsyncSession, Depends(get_session)],
 ):
+    print(f"Received payload: custom_script={payload.custom_script}, theme={payload.theme}")
     """
     Create a new ad generation job.
     Returns immediately with status 'pending'.
@@ -354,6 +365,7 @@ async def create_job(
     vin=payload.vin,
     listing_url=payload.listing_url,
     theme=payload.theme,
+    custom_script=payload.custom_script or None,
     video_type=payload.video_type,    # ← add this
     photos_s3_keys=payload.photos_s3_keys,
     voice_s3_key=payload.voice_s3_key,

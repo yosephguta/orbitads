@@ -214,6 +214,33 @@ async def mark_posted(
     await session.commit()
     return {"success": True}
 
+class ScriptRequest(BaseModel):
+    vehicle_info:  str
+    custom_prompt: str
+
+@router.post("/generate-script")
+async def generate_custom_script(
+    payload: ScriptRequest,
+    current_user: Annotated[User, Depends(get_current_user)],
+):
+    message = await _client.messages.create(
+        model="claude-sonnet-4-20250514",
+        max_tokens=500,
+        messages=[{
+            "role": "user",
+            "content": f"""Write a 30-second video ad script for this car salesperson.
+
+Vehicle: {payload.vehicle_info}
+
+Their style/prompt: {payload.custom_prompt}
+
+Write a natural, conversational script (60-70 words) that captures their style.
+End with "Send me a message today!" or similar personal CTA.
+Return ONLY the script text, no labels or formatting."""
+        }]
+    )
+    return {"script": message.content[0].text.strip()}
+
 
 # ── Check sold status ─────────────────────────────────────────
 @router.post("/check-sold")

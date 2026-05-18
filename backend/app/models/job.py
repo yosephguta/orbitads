@@ -41,6 +41,9 @@ class Job(SQLModel, table=True):
     # The creative direction for the ad — e.g. "family", "outdoorsy"
     theme: str = Field(max_length=100)
 
+    # Custom script generation
+    custom_script: Optional[str] = Field(default=None, sa_column=Column(Text))
+
     # Record Video Type
     video_type: str = Field(default="walkaround", max_length=50)
 
@@ -117,6 +120,7 @@ class JobCreate(SQLModel):
     voice_s3_key: Optional[str] = None
     car_photo_urls: Optional[str] = None   # JSON array of car photo URLs
     video_type: str = "walkaround"
+    custom_script: Optional[str] = None 
 
 
 # ── API: Job response ─────────────────────────────────────────
