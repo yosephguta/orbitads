@@ -280,7 +280,7 @@ def build_ad_timeline(
         },
         "output": {
             "format":     "mp4",
-            "resolution": "hd",
+            "resolution": "hd", 
             "fps":        30,
             "quality":    "high",
         },
@@ -395,7 +395,7 @@ def build_ad_timeline_photo_only(
         },
         "output": {
             "format":     "mp4",
-            "resolution": "hd",
+            "resolution": "hd", 
             "fps":        30,
             "quality":    "high",
         },
