@@ -1,3 +1,4 @@
 .env
 backend/orbitads.db
 backend/orbitads.db
+venv/
