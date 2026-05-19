@@ -1,8 +1,6 @@
 from __future__ import annotations
-
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from typing import Optional
-
 from sqlmodel import Field, SQLModel
 
 
@@ -16,11 +14,17 @@ class UserBase(SQLModel):
     heygen_avatar_id: Optional[str] = Field(default=None, max_length=255)
     phone_number: Optional[str] = Field(default=None, max_length=20)
 
+    # ── Multi-user / billing fields ───────────────────────────
+    role: str = Field(default="salesperson", max_length=50)  # admin | salesperson
+    subscription_status: str = Field(default="trial", max_length=50)  # trial | active | cancelled | past_due
+    stripe_customer_id: Optional[str] = Field(default=None, max_length=255)
+    stripe_subscription_id: Optional[str] = Field(default=None, max_length=255)
+    trial_ends_at: Optional[datetime] = Field(default=None)
+
 
 # ── Database table ────────────────────────────────────────────
 class User(UserBase, table=True):
     __tablename__ = "users"
-
     id: Optional[int] = Field(default=None, primary_key=True)
     hashed_password: str
     created_at: datetime = Field(
@@ -46,8 +50,11 @@ class UserRead(SQLModel):
     full_name: str
     dealership_name: str
     is_active: bool
+    role: str
+    subscription_status: str
     elevenlabs_voice_id: Optional[str]
     heygen_avatar_id: Optional[str]
+    trial_ends_at: Optional[datetime]
     created_at: datetime
 
 

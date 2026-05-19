@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -49,14 +49,17 @@ async def register(
             detail="An account with this email already exists.",
         )
 
-    # Create the user — hash the password before storing
+# Create the user — hash the password before storing
     user = User(
         email=payload.email,
         full_name=payload.full_name,
         dealership_name=payload.dealership_name,
         hashed_password=hash_password(payload.password),
+        role="salesperson",
+        subscription_status="trial",
+        trial_ends_at=datetime.now(timezone.utc) + timedelta(days=14),
     )
-
+	
     session.add(user)       # stage the insert
     await session.commit()  # write to database
     await session.refresh(user)  # reload from DB to get the auto-assigned id
