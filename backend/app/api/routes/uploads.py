@@ -6,10 +6,11 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlmodel import SQLModel
 
 from app.core.security import get_current_user
+from app.core.middleware import require_active_subscription
 from app.models.user import User
 from app.services import s3
 
-router = APIRouter(prefix="/uploads", tags=["uploads"])
+router = APIRouter(prefix="/uploads", tags=["uploads"], dependencies=[Depends(require_active_subscription)])
 
 # ── Allowed file types ────────────────────────────────────────
 # We validate content types so users can't upload unexpected files.

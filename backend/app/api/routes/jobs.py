@@ -10,6 +10,7 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 
 from app.core.database import get_session
 from app.core.security import get_current_user
+from app.core.middleware import require_active_subscription
 from app.models.job import Job, JobCreate, JobRead, JobStatus
 from app.models.user import User
 from app.services.vin_decoder import decode_vin
@@ -32,7 +33,11 @@ from app.services.s3 import (
     get_audio_duration,
 )
 
-router = APIRouter(prefix="/jobs", tags=["jobs"])
+router = APIRouter(
+    prefix="/jobs",
+    tags=["jobs"],
+    dependencies=[Depends(require_active_subscription)],
+)
 
 # Default car photos used when none are provided
 # These are placeholder Kia photos — Step 18 replaces this with real scraping

@@ -51,6 +51,13 @@ class Settings(BaseSettings):
     # Used for the job queue in Phase 2
     redis_url: str = "redis://localhost:6379/0"
 
+    # ── Stripe ────────────────────────────────────────────────────
+    stripe_secret_key: str
+    stripe_webhook_secret: str
+    stripe_price_starter: str
+    stripe_price_pro: str
+    stripe_price_elite: str
+
     # ── CORS ──────────────────────────────────────────────────
     # Which frontend URLs are allowed to talk to this backend
     allowed_origins: list[str] = [
@@ -62,6 +69,7 @@ class Settings(BaseSettings):
 @lru_cache
 def get_settings() -> Settings:
     """
+
     Returns the Settings object.
     @lru_cache means it only reads the .env file once — not on every request.
     Import and call this anywhere you need a config value:

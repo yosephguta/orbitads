@@ -2,3 +2,5 @@
 backend/orbitads.db
 backend/orbitads.db
 venv/
+__pycache__/
+*.pyc
