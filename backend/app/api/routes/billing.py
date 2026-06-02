@@ -4,7 +4,7 @@ import stripe
 from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException, Request, Header
 from sqlmodel import select
-from sqlmodel.ext.asyncio.session import AsyncSession as SQLModelAsyncSession
+from sqlmodel.ext.asyncio.session import AsyncSession
 
 from app.core.config import get_settings
 from app.core.database import get_session

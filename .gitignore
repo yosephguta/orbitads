@@ -1,6 +1,7 @@
 .env
 backend/orbitads.db
-backend/orbitads.db
 venv/
 __pycache__/
 *.pyc
+*.pyo
+.DS_Store
