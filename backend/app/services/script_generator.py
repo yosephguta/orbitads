@@ -52,6 +52,7 @@ async def generate_ad_script(
     theme: str,
     salesperson_name: Optional[str] = None,
     dealership_name: Optional[str] = None,
+    include_cta: bool = True,
 ) -> dict:
     """
     Generate a 30-second ad script for a vehicle using Claude.
@@ -61,6 +62,8 @@ async def generate_ad_script(
         theme:            Creative direction e.g. "family", "outdoorsy"
         salesperson_name: Injected into script e.g. "I'm Yoseph"
         dealership_name:  Injected into CTA e.g. "come see us at JBA Kia"
+        include_cta:      When False, omit the verbal CTA — used for with_outro
+                          videos where the recorded outro clip handles the CTA
 
     Returns:
         Structured script dict (see module docstring above)
@@ -68,25 +71,31 @@ async def generate_ad_script(
     Raises:
         RuntimeError on API failure or if Claude returns unparseable output
     """
-    # Get the theme guidance words, fall back to the raw theme if not in our list
     theme_key = theme.lower().strip()
     guidance = THEME_GUIDANCE.get(theme_key, theme)
-
-    # Build the vehicle summary line Claude will see
     v_summary = vehicle_summary(vehicle_data)
 
-    # ── System prompt ─────────────────────────────────────────
-    # Sets Claude's role and the rules it must follow
-    system_prompt = """You are an expert automotive advertising copywriter specializing in 
-dealership video ads. You write natural, conversational scripts that sound like a real 
-person talking — not a corporate announcement. Your scripts are punchy, benefit-focused, 
+    system_prompt = """You are an expert automotive advertising copywriter specializing in
+dealership video ads. You write natural, conversational scripts that sound like a real
+person talking — not a corporate announcement. Your scripts are punchy, benefit-focused,
 and always end with a clear call to action."""
 
-# Build optional context lines
     sp_line = f"The salesperson's name is {salesperson_name}." if salesperson_name else ""
-    # Remove dealer_line entirely — no dealership mentions
 
-    # ── User prompt ───────────────────────────────────────────
+    if include_cta:
+        cta_rules = (
+            "- The CTA must always be: \"Send me a message\" or \"DM me\" or \"Message me today\"\n"
+            "- End with something like: \"Message me today and let's make a deal!\""
+        )
+        cta_instruction = "One closing sentence ending with a message/DM call to action — no dealership name"
+    else:
+        cta_rules = (
+            "- Do NOT include any verbal call to action at the end\n"
+            "- Do NOT say \"send me a message\", \"DM me\", \"message me\", or any variation\n"
+            "- End the script naturally after the benefits — the outro video handles the CTA"
+        )
+        cta_instruction = "One natural closing sentence that wraps up the benefits — NO call to action, the outro video handles that"
+
     user_prompt = f"""Write a 30-second video ad script for a car salesperson posting on social media.
 
 VEHICLE: {v_summary}
@@ -101,14 +110,13 @@ RULES:
 - The hook must grab attention in the first 3 seconds
 - NEVER mention the dealership name
 - NEVER say "come visit us", "stop by", "our dealership", or "our lot"
-- The CTA must always be: "Send me a message" or "DM me" or "Message me today"
-- End with something like: "Message me today and let's make a deal!"
+{cta_rules}
 
 Return ONLY a JSON object with these exact keys. No markdown, no explanation, just the JSON:
 {{
     "hook": "One punchy opening sentence that immediately grabs attention (10-15 words)",
     "body": "Two or three sentences covering the key benefits that match the theme",
-    "cta": "One closing sentence ending with a message/DM call to action — no dealership name",
+    "cta": "{cta_instruction}",
     "full_script": "The hook, body, and cta combined into one natural flowing paragraph"
 }}"""
 

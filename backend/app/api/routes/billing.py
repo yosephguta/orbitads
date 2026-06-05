@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import stripe
-from typing import Annotated
+from typing import Annotated, Optional
 from fastapi import APIRouter, Depends, HTTPException, Request, Header
 from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
@@ -90,7 +90,7 @@ async def customer_portal(
 @router.post("/webhook")
 async def stripe_webhook(
     request: Request,
-    stripe_signature: Annotated[str | None, Header(alias="stripe-signature")] = None,
+    stripe_signature: Annotated[Optional[str], Header(alias="stripe-signature")] = None,
     session: AsyncSession = Depends(get_session),
 ):
     """

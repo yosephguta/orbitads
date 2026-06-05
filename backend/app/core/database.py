@@ -4,6 +4,7 @@ from sqlmodel import SQLModel
 
 from app.core.config import get_settings
 from app.models.listing import Listing  # noqa
+from app.models.outro_video import OutroVideo  # noqa
 
 settings = get_settings()
 

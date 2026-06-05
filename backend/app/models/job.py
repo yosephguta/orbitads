@@ -4,134 +4,77 @@ from enum import Enum
 from typing import Optional
 
 from sqlalchemy import Column, Text
-from sqlmodel import Field, Relationship, SQLModel
+from sqlmodel import Field, SQLModel
 
 
-
-
-# ── Status enum ───────────────────────────────────────────────
-# An enum is a fixed set of allowed values for a field.
-# This prevents typos like status="compelted" from slipping into the DB.
-# The stages are in pipeline order — each phase adds more stages.
 class JobStatus(str, Enum):
-    PENDING           = "pending"             # job created, not started yet
-    VIN_DECODING      = "vin_decoding"        # calling NHTSA API
-    SCRIPT_GENERATING = "script_generating"   # calling Claude API
-    VOICE_CLONING     = "voice_cloning"       # Phase 2 — ElevenLabs
-    AVATAR_GENERATING = "avatar_generating"   # Phase 2 — HeyGen
-    ASSEMBLING        = "assembling"           # Phase 3 — Shotstack
-    COMPLETED         = "completed"            # video ready
-    FAILED            = "failed"               # something went wrong
+    PENDING           = "pending"
+    VIN_DECODING      = "vin_decoding"
+    SCRIPT_GENERATING = "script_generating"
+    VOICE_CLONING     = "voice_cloning"
+    ASSEMBLING        = "assembling"
+    COMPLETED         = "completed"
+    FAILED            = "failed"
 
 
-# ── Database table ────────────────────────────────────────────
 class Job(SQLModel, table=True):
     __tablename__ = "jobs"
 
     id: Optional[int] = Field(default=None, primary_key=True)
-
-    # Which user created this job
     user_id: int = Field(foreign_key="users.id", index=True)
 
-    # ── Input fields ──────────────────────────────────────────
-    # Either vin or listing_url must be provided — not necessarily both
+    # ── Input ─────────────────────────────────────────────────
     vin: Optional[str] = Field(default=None, max_length=17)
     listing_url: Optional[str] = Field(default=None, max_length=2048)
-
-    # The creative direction for the ad — e.g. "family", "outdoorsy"
     theme: str = Field(max_length=100)
-
-    # Custom script generation
     custom_script: Optional[str] = Field(default=None, sa_column=Column(Text))
 
-    # Record Video Type
-    video_type: str = Field(default="walkaround", max_length=50)
+    # "slideshow" or "with_outro"
+    video_type: str = Field(default="slideshow", max_length=50)
 
-    # S3 keys for the salesperson's uploaded assets.
-    # We store the S3 key (the file path in the bucket), not the full URL.
-    # Full URLs are generated on demand using presigned URLs.
-    #
-    # photos_s3_keys stores multiple keys as a JSON string:
-    # '["uploads/1/photos/abc.jpg", "uploads/1/photos/def.jpg"]'
-    # We use Text (not VARCHAR) because the length is unpredictable.
-    photos_s3_keys: Optional[str] = Field(
-        default=None,
-        sa_column=Column(Text)
-    )
+    # ID of the OutroVideo record to append (only used when video_type == "with_outro")
+    outro_video_id: Optional[int] = Field(default=None, foreign_key="outro_videos.id")
+
+    photos_s3_keys: Optional[str] = Field(default=None, sa_column=Column(Text))
     voice_s3_key: Optional[str] = Field(default=None, max_length=512)
-
-    # JSON array of car photo URLs e.g. '["https://...", "https://..."]'
     car_photo_urls: Optional[str] = Field(default=None, sa_column=Column(Text))
 
-    # ── Pipeline output fields ────────────────────────────────
-    # These start as None and get filled in as each stage completes.
-
-    # JSON string of decoded vehicle data from NHTSA
-    # e.g. '{"year": "2024", "make": "Kia", "model": "Telluride", ...}'
-    vehicle_data: Optional[str] = Field(
-        default=None,
-        sa_column=Column(Text)
-    )
-
-    # JSON string of the Claude-generated script
-    # e.g. '{"hook": "...", "body": "...", "cta": "...", "full_script": "..."}'
-    generated_script: Optional[str] = Field(
-        default=None,
-        sa_column=Column(Text)
-    )
-
-    # Phase 2+ outputs — empty for now
-    elevenlabs_voice_id: Optional[str] = Field(default=None, max_length=255)
-    heygen_video_url: Optional[str] = Field(default=None, max_length=2048)
+    # ── Pipeline outputs ──────────────────────────────────────
+    vehicle_data: Optional[str] = Field(default=None, sa_column=Column(Text))
+    generated_script: Optional[str] = Field(default=None, sa_column=Column(Text))
     final_video_s3_key: Optional[str] = Field(default=None, max_length=512)
     final_video_url: Optional[str] = Field(default=None, max_length=2048)
 
-    # ── Status tracking ───────────────────────────────────────
+    # ── Status ────────────────────────────────────────────────
     status: JobStatus = Field(default=JobStatus.PENDING)
-
-    # Human-readable error message if something goes wrong
     error_message: Optional[str] = Field(default=None, sa_column=Column(Text))
-
-    # 0–100 percentage for the frontend progress bar
     progress_pct: int = Field(default=0)
 
     # ── Timestamps ────────────────────────────────────────────
-    created_at: datetime = Field(
-        default_factory=lambda: datetime.now(timezone.utc)
-    )
-    updated_at: datetime = Field(
-        default_factory=lambda: datetime.now(timezone.utc)
-    )
-    # Only set when status reaches "completed" or "failed"
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     completed_at: Optional[datetime] = Field(default=None)
 
-    # ── Relationship ──────────────────────────────────────────
-    # Lets us do job.user to get the User who created this job
-    
 
-
-# ── API: Job creation input ───────────────────────────────────
-# What the frontend sends when submitting a new ad request
 class JobCreate(SQLModel):
     vin: Optional[str] = None
     listing_url: Optional[str] = None
     theme: str
     photos_s3_keys: Optional[str] = None
     voice_s3_key: Optional[str] = None
-    car_photo_urls: Optional[str] = None   # JSON array of car photo URLs
-    video_type: str = "walkaround"
-    custom_script: Optional[str] = None 
+    car_photo_urls: Optional[str] = None
+    video_type: str = "slideshow"
+    outro_video_id: Optional[int] = None
+    custom_script: Optional[str] = None
 
 
-# ── API: Job response ─────────────────────────────────────────
-# What the API returns when the frontend polls for job status.
-# Includes all the output fields so the frontend can show
-# vehicle info, the script, and eventually the video.
 class JobRead(SQLModel):
     id: int
     status: JobStatus
     progress_pct: int
     theme: str
+    video_type: str
+    outro_video_id: Optional[int]
     vin: Optional[str]
     vehicle_data: Optional[str]
     generated_script: Optional[str]

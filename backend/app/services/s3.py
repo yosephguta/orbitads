@@ -70,6 +70,11 @@ def make_final_video_key(job_id: int) -> str:
     return f"outputs/{job_id}/final_ad.mp4"
 
 
+def make_outro_key(user_id: int, timestamp: int, ext: str) -> str:
+    """e.g. user_outros/42/1717500000/outro.mp4"""
+    return f"user_outros/{user_id}/{timestamp}/outro.{ext}"
+
+
 # ── Presigned upload URL ───────────────────────────────────────
 def create_presigned_upload_url(
     s3_key: str,

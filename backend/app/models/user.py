@@ -11,7 +11,6 @@ class UserBase(SQLModel):
     dealership_name: str = Field(max_length=255, default="")
     is_active: bool = Field(default=True)
     elevenlabs_voice_id: Optional[str] = Field(default=None, max_length=255)
-    heygen_avatar_id: Optional[str] = Field(default=None, max_length=255)
     phone_number: Optional[str] = Field(default=None, max_length=20)
 
     # ── Multi-user / billing fields ───────────────────────────
@@ -53,7 +52,6 @@ class UserRead(SQLModel):
     role: str
     subscription_status: str
     elevenlabs_voice_id: Optional[str]
-    heygen_avatar_id: Optional[str]
     trial_ends_at: Optional[datetime]
     created_at: datetime
 
@@ -63,4 +61,3 @@ class UserUpdate(SQLModel):
     full_name: Optional[str] = None
     dealership_name: Optional[str] = None
     elevenlabs_voice_id: Optional[str] = None
-    heygen_avatar_id: Optional[str] = None

@@ -16,9 +16,7 @@ from app.models.user import User
 from app.services.vin_decoder import decode_vin
 from app.services.script_generator import generate_ad_script
 from app.services.voice_clone import text_to_speech
-from app.services.avatar import submit_video, wait_for_video, download_video
 from app.services.video_assembler import (
-    build_ad_timeline,
     build_ad_timeline_photo_only,
     submit_render,
     wait_for_render,
@@ -27,7 +25,6 @@ from app.services.video_assembler import (
 from app.services.s3 import (
     upload_bytes,
     make_audio_output_key,
-    make_avatar_output_key,
     make_final_video_key,
     create_presigned_download_url,
     get_audio_duration,
@@ -39,8 +36,6 @@ router = APIRouter(
     dependencies=[Depends(require_active_subscription)],
 )
 
-# Default car photos used when none are provided
-# These are placeholder Kia photos — Step 18 replaces this with real scraping
 DEFAULT_CAR_PHOTOS = [
     "https://platform.cstatic-images.com/xxlarge/in/v2/ff3aaaec-e513-4b42-8f96-8ed9d9280fd1/0b4af000-a573-4afc-b04d-9c9639bdbf02/ZfmeNMBUffUiOHI44HeeZ-2eR0U.jpg",
     "https://platform.cstatic-images.com/xxlarge/in/v2/ff3aaaec-e513-4b42-8f96-8ed9d9280fd1/0b4af000-a573-4afc-b04d-9c9639bdbf02/MmGE9KYnZW-P85anPOVCpjgH2sM.jpg",
@@ -48,7 +43,6 @@ DEFAULT_CAR_PHOTOS = [
 ]
 
 
-# ── Helper ────────────────────────────────────────────────────
 async def _update_job(session: AsyncSession, job: Job, **kwargs) -> None:
     for key, value in kwargs.items():
         setattr(job, key, value)
@@ -58,20 +52,20 @@ async def _update_job(session: AsyncSession, job: Job, **kwargs) -> None:
     await session.refresh(job)
 
 
-# ── Full pipeline ─────────────────────────────────────────────
+# ── Pipeline ──────────────────────────────────────────────────
 async def _run_pipeline(job_id: int, user_id: int):
     """
-    Full ad generation pipeline — runs in the background.
+    Ad generation pipeline — runs in the background.
 
     Stages:
       1. VIN decode         (10% → 30%)
       2. Script generation  (30% → 50%)
-      3. Voice TTS          (50% → 65%)
-      4. Avatar generation  (65% → 80%)
-      5. Video assembly     (80% → 100%)
+      3. Voice TTS          (50% → 70%)
+      4. Video assembly     (70% → 100%)
     """
     from app.core.database import AsyncSessionLocal
     from app.core.config import get_settings
+    from app.models.outro_video import OutroVideo
     settings = get_settings()
 
     async with AsyncSessionLocal() as session:
@@ -81,35 +75,21 @@ async def _run_pipeline(job_id: int, user_id: int):
         if not job or not user:
             return
 
-       # ── Stage 1: VIN decode ───────────────────────────────
-        await _update_job(session, job,
-            status=JobStatus.VIN_DECODING,
-            progress_pct=10,
-        )
+        # ── Stage 1: VIN decode ───────────────────────────────
+        await _update_job(session, job, status=JobStatus.VIN_DECODING, progress_pct=10)
         try:
             vehicle_data = await decode_vin(job.vin) if job.vin else {}
-            await _update_job(session, job,
-                vehicle_data=json.dumps(vehicle_data),
-                progress_pct=30,
-            )
+            await _update_job(session, job, vehicle_data=json.dumps(vehicle_data), progress_pct=30)
         except Exception as e:
             print(f"VIN decode failed (non-fatal): {e}")
-            # Continue with empty vehicle data — we have year/make/model from scraper
             vehicle_data = {}
-            await _update_job(session, job,
-                vehicle_data=json.dumps(vehicle_data),
-                progress_pct=30,
-            )
+            await _update_job(session, job, vehicle_data=json.dumps(vehicle_data), progress_pct=30)
 
         # ── Stage 2: Script generation ────────────────────────
         vd = vehicle_data if isinstance(vehicle_data, dict) else {}
-        await _update_job(session, job,
-            status=JobStatus.SCRIPT_GENERATING,
-            progress_pct=40,
-        )
+        await _update_job(session, job, status=JobStatus.SCRIPT_GENERATING, progress_pct=35)
         try:
             if job.custom_script:
-                # Use the user's custom script directly
                 script = {
                     "full_script": job.custom_script,
                     "hook":        job.custom_script[:50],
@@ -124,11 +104,9 @@ async def _run_pipeline(job_id: int, user_id: int):
                     theme=job.theme or "family",
                     salesperson_name=user.full_name,
                     dealership_name=None,
+                    include_cta=(job.video_type != "with_outro"),
                 )
-            await _update_job(session, job,
-                generated_script=json.dumps(script),
-                progress_pct=50,
-            )
+            await _update_job(session, job, generated_script=json.dumps(script), progress_pct=50)
         except Exception as e:
             await _update_job(session, job,
                 status=JobStatus.FAILED,
@@ -140,33 +118,16 @@ async def _run_pipeline(job_id: int, user_id: int):
         # ── Stage 3: Voice TTS ────────────────────────────────
         audio_s3_key = None
         if user.elevenlabs_voice_id:
-            await _update_job(session, job,
-                status=JobStatus.VOICE_CLONING,
-                progress_pct=55,
-            )
+            await _update_job(session, job, status=JobStatus.VOICE_CLONING, progress_pct=55)
             try:
                 audio_bytes = await text_to_speech(
                     text=script["full_script"],
                     voice_id=user.elevenlabs_voice_id,
                 )
-                # Add 300ms lead-in silence for HeyGen lip sync warmup
-                try:
-                    from pydub import AudioSegment
-                    import io
-                    audio_segment = AudioSegment.from_mp3(io.BytesIO(audio_bytes))
-                    silence      = AudioSegment.silent(duration=300)
-                    padded       = silence + audio_segment
-                    buffer       = io.BytesIO()
-                    padded.export(buffer, format="mp3")
-                    audio_bytes  = buffer.getvalue()
-                    print("Added 300ms lead-in silence")
-                except Exception as e:
-                    print(f"Audio padding failed (non-fatal): {e}")
-                    
                 audio_key = make_audio_output_key(job.id)
                 upload_bytes(audio_bytes, audio_key, "audio/mpeg")
                 audio_s3_key = audio_key
-                await _update_job(session, job, progress_pct=65)
+                await _update_job(session, job, progress_pct=70)
             except Exception as e:
                 await _update_job(session, job,
                     status=JobStatus.FAILED,
@@ -175,49 +136,10 @@ async def _run_pipeline(job_id: int, user_id: int):
                 )
                 return
 
-      # ── Stage 4: Avatar generation (premium only) ─────────────────
-        avatar_s3_key = None
-        if job.video_type == "avatar" and user.heygen_avatar_id and audio_s3_key:
-            await _update_job(session, job,
-                status=JobStatus.AVATAR_GENERATING,
-                progress_pct=70,
-            )
-            try:
-                audio_url = (
-                    f"https://{settings.s3_bucket_name}.s3."
-                    f"{settings.aws_region}.amazonaws.com/{audio_s3_key}"
-                )
-                video_id = await submit_video(
-                    avatar_id=user.heygen_avatar_id,
-                    audio_url=audio_url,
-                )
-                heygen_video_url = await wait_for_video(video_id)
-                video_bytes = await download_video(heygen_video_url)
-                avatar_key = make_avatar_output_key(job.id)
-                upload_bytes(video_bytes, avatar_key, "video/mp4")
-                avatar_s3_key = avatar_key
-                await _update_job(session, job,
-                    heygen_video_url=heygen_video_url,
-                    progress_pct=80,
-                )
-            except Exception as e:
-                await _update_job(session, job,
-                    status=JobStatus.FAILED,
-                    error_message=f"Avatar generation failed: {e}",
-                    completed_at=datetime.now(timezone.utc),
-                )
-                return
-        else:
-            # Walkaround only — skip avatar
-            await _update_job(session, job, progress_pct=80)
-
-        # ── Stage 5: Video assembly ────────────────────────────────────
-        print(f"Stage 5 — video_type: {job.video_type}, audio_s3_key: {audio_s3_key}")
+        # ── Stage 4: Video assembly ───────────────────────────
+        print(f"Stage 4 — video_type: {job.video_type}, audio_s3_key: {audio_s3_key}")
         if audio_s3_key:
-            await _update_job(session, job,
-                status=JobStatus.ASSEMBLING,
-                progress_pct=85,
-            )
+            await _update_job(session, job, status=JobStatus.ASSEMBLING, progress_pct=75)
             try:
                 audio_url = (
                     f"https://{settings.s3_bucket_name}.s3."
@@ -225,7 +147,7 @@ async def _run_pipeline(job_id: int, user_id: int):
                 )
                 audio_duration = get_audio_duration(audio_s3_key)
 
-                # Get reviewed photos
+                # Reviewed car photos
                 car_photos = DEFAULT_CAR_PHOTOS
                 if job.car_photo_urls:
                     try:
@@ -233,7 +155,6 @@ async def _run_pipeline(job_id: int, user_id: int):
                     except Exception:
                         car_photos = DEFAULT_CAR_PHOTOS
 
-                # Apply walkaround ordering
                 try:
                     from app.services.photo_classifier import get_walkaround_photos
                     car_photos = await get_walkaround_photos(
@@ -251,43 +172,36 @@ async def _run_pipeline(job_id: int, user_id: int):
                 from app.services.vin_decoder import vehicle_summary
                 v_summary = vehicle_summary(vd) if vd else "Visit us today"
 
-                # Branch: avatar+walkaround vs walkaround only
-                if job.video_type == "avatar" and avatar_s3_key:
-                    avatar_url = (
-                        f"https://{settings.s3_bucket_name}.s3."
-                        f"{settings.aws_region}.amazonaws.com/{avatar_s3_key}"
-                    )
-                    timeline = build_ad_timeline(
-                        avatar_video_url=avatar_url,
-                        audio_url=audio_url,
-                        car_photo_urls=car_photos,
-                        dealership_name=user.dealership_name,
-                        vehicle_summary=v_summary,
-                        feature_highlights=highlights,
-                        duration=audio_duration,
-                        hook_pct=0.15,
-                        cta_pct=0.15,
-                        transition_style="dynamic",
-                        brand_color="#C4122F",
-                    )
-                else:
-                    # Walkaround only
-                    timeline = build_ad_timeline_photo_only(
-                        audio_url=audio_url,
-                        car_photo_urls=car_photos,
-                        dealership_name=user.dealership_name,
-                        vehicle_summary=v_summary,
-                        feature_highlights=highlights,
-                        duration=audio_duration,
-                        brand_color="#C4122F",
-                    )
+                # Fetch outro clip when requested
+                outro_url = None
+                outro_duration = 8.0
+                if job.video_type == "with_outro" and job.outro_video_id:
+                    outro = await session.get(OutroVideo, job.outro_video_id)
+                    if outro and outro.user_id == user_id:
+                        outro_url = create_presigned_download_url(outro.s3_key, expires_in=3600)
+                        outro_duration = outro.duration_seconds or 8.0
+                        print(f"Outro: {outro.name}, {outro_duration}s")
+                    else:
+                        print("Outro not found — assembling slideshow only")
+
+                timeline = build_ad_timeline_photo_only(
+                    audio_url=audio_url,
+                    car_photo_urls=car_photos,
+                    dealership_name=user.dealership_name,
+                    vehicle_summary=v_summary,
+                    feature_highlights=highlights,
+                    duration=audio_duration,
+                    brand_color="#C4122F",
+                    outro_video_url=outro_url,
+                    outro_duration=outro_duration,
+                )
 
                 render_id = await submit_render(timeline)
                 final_video_url = await wait_for_render(render_id)
                 final_bytes = await download_render(final_video_url)
                 final_key = make_final_video_key(job.id)
                 upload_bytes(final_bytes, final_key, "video/mp4")
-                presigned_url = create_presigned_download_url(final_key, expires_in=604800)  # 7 days
+                presigned_url = create_presigned_download_url(final_key, expires_in=604800)
 
                 await _update_job(session, job,
                     final_video_s3_key=final_key,
@@ -303,7 +217,7 @@ async def _run_pipeline(job_id: int, user_id: int):
                 )
                 return
 
-        # ── Done ──────────────────────────────────────────────
+        # ── Done ─────────────────────────────────────────────
         await _update_job(session, job,
             status=JobStatus.COMPLETED,
             progress_pct=100,
@@ -313,8 +227,6 @@ async def _run_pipeline(job_id: int, user_id: int):
 
 def _build_highlights(vd: dict, dealership_name: str) -> list[str]:
     highlights = []
-
-    # Drivetrain
     drive = vd.get("drivetrain") or ""
     if drive:
         if "all-wheel" in drive.lower() or "awd" in drive.lower():
@@ -325,37 +237,26 @@ def _build_highlights(vd: dict, dealership_name: str) -> list[str]:
             highlights.append("Rear-Wheel Drive")
         else:
             highlights.append(drive)
-
-    # Engine
     engine = vd.get("engine") or ""
     if engine:
         highlights.append(engine)
-
-    # Transmission
     transmission = vd.get("transmission") or ""
-    if transmission and "automatic" in transmission.lower():
+    if "automatic" in transmission.lower():
         highlights.append("Automatic Transmission")
-    elif transmission and "manual" in transmission.lower():
+    elif "manual" in transmission.lower():
         highlights.append("Manual Transmission")
-
-    # Body style
     body = vd.get("body_style") or ""
     if body and len(highlights) < 3:
         highlights.append(body)
-
-    # Fuel type — only if electric or hybrid (skip gasoline, too generic)
     fuel = vd.get("fuel_type") or ""
     if fuel and len(highlights) < 3:
         if "electric" in fuel.lower():
             highlights.append("Electric Vehicle")
         elif "hybrid" in fuel.lower():
             highlights.append("Hybrid")
-
-    # Pad to 3 with dealership name
     highlights = highlights[:3]
     while len(highlights) < 3:
         highlights.append(dealership_name)
-
     return highlights
 
 
@@ -367,12 +268,7 @@ async def create_job(
     current_user: Annotated[User, Depends(get_current_user)],
     session: Annotated[AsyncSession, Depends(get_session)],
 ):
-    print(f"Received payload: custom_script={payload.custom_script}, theme={payload.theme}")
-    """
-    Create a new ad generation job.
-    Returns immediately with status 'pending'.
-    Pipeline runs in the background — poll GET /jobs/{id} for progress.
-    """
+    """Create a new ad generation job. Returns immediately — poll GET /jobs/{id} for progress."""
     if not payload.vin and not payload.listing_url:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -380,28 +276,24 @@ async def create_job(
         )
 
     job = Job(
-    user_id=current_user.id,
-    vin=payload.vin,
-    listing_url=payload.listing_url,
-    theme=payload.theme,
-    custom_script=payload.custom_script or None,
-    video_type=payload.video_type,    # ← add this
-    photos_s3_keys=payload.photos_s3_keys,
-    voice_s3_key=payload.voice_s3_key,
-    car_photo_urls=payload.car_photo_urls,
-    status=JobStatus.PENDING,
-    progress_pct=0,
+        user_id=current_user.id,
+        vin=payload.vin,
+        listing_url=payload.listing_url,
+        theme=payload.theme,
+        custom_script=payload.custom_script or None,
+        video_type=payload.video_type,
+        outro_video_id=payload.outro_video_id,
+        photos_s3_keys=payload.photos_s3_keys,
+        voice_s3_key=payload.voice_s3_key,
+        car_photo_urls=payload.car_photo_urls,
+        status=JobStatus.PENDING,
+        progress_pct=0,
     )
     session.add(job)
     await session.commit()
     await session.refresh(job)
 
-    background_tasks.add_task(
-        _run_pipeline,
-        job_id=job.id,
-        user_id=current_user.id,
-    )
-
+    background_tasks.add_task(_run_pipeline, job_id=job.id, user_id=current_user.id)
     return job
 
 
@@ -415,15 +307,9 @@ async def get_job(
     """Poll a job's current status and progress."""
     job = await session.get(Job, job_id)
     if not job:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Job not found.",
-        )
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found.")
     if job.user_id != current_user.id:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="You do not have access to this job.",
-        )
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied.")
     return job
 
 
