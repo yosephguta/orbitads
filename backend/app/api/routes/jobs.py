@@ -75,10 +75,28 @@ async def _run_pipeline(job_id: int, user_id: int):
         if not job or not user:
             return
 
+        print(f"Pipeline start — job_id={job_id}, vin={job.vin!r}, theme={job.theme!r}, video_type={job.video_type!r}")
+
         # ── Stage 1: VIN decode ───────────────────────────────
         await _update_job(session, job, status=JobStatus.VIN_DECODING, progress_pct=10)
         try:
             vehicle_data = await decode_vin(job.vin) if job.vin else {}
+
+            # Sanity check: decoded VIN must match the job's VIN
+            if job.vin and vehicle_data:
+                decoded_vin = vehicle_data.get("vin", "").upper()
+                if decoded_vin and decoded_vin != job.vin.upper():
+                    print(f"VIN MISMATCH — job.vin={job.vin!r}, decoded={decoded_vin!r}. Failing job.")
+                    await _update_job(session, job,
+                        status=JobStatus.FAILED,
+                        error_message=(
+                            f"VIN mismatch: submitted {job.vin} but NHTSA decoded {decoded_vin}. "
+                            "This vehicle data may have been mixed up during import."
+                        ),
+                        completed_at=datetime.now(timezone.utc),
+                    )
+                    return
+
             await _update_job(session, job, vehicle_data=json.dumps(vehicle_data), progress_pct=30)
         except Exception as e:
             print(f"VIN decode failed (non-fatal): {e}")
