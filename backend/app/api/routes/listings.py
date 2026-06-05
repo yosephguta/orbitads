@@ -94,7 +94,12 @@ async def generate_listing(
     mileage_str = payload.mileage or "Contact for mileage"
     dealer      = payload.dealership_name or current_user.dealership_name or "Our Dealership"
 
-    prompt = f"""Write a Facebook Marketplace vehicle listing for a car salesperson selling personally.
+    system_prompt = """You are a professional car salesperson writing a Facebook Marketplace vehicle listing.
+You are presenting a vehicle from your dealership's inventory to potential buyers.
+Write in first person as the salesperson but NEVER imply you personally own the car.
+Focus entirely on the vehicle's merits and how to contact you."""
+
+    prompt = f"""Write a Facebook Marketplace vehicle listing for this car.
 
 Vehicle: {vehicle_info}
 Price: {price_clean}
@@ -102,15 +107,18 @@ Mileage: {mileage_str}
 VIN: {payload.vin or 'Available on request'}
 
 Requirements:
-- Title: max 100 chars — "Year Make Model Trim - $Price"  (NO dealership name)
+- Title: max 100 chars — "Year Make Model Trim - $Price" (NO dealership name)
 - Description: 200-300 words, conversational and personal tone
-  * Opening hook about why this car is great
-  * Key features with emojis as bullet points  
+  * Opening must be about the CAR: 'Check out this...', 'This {vehicle_info} is...', or 'Looking for a...'
+  * Key features with emojis as bullet points
   * Brief condition note
-  * Call to action: "Send me a message" or "DM me" — NOT "visit our dealership"
-  * End with: "Message me on Facebook for more info or to schedule a test drive!"
+  * End with: "Send me a message and let's talk!" or "DM me for more info or to schedule a test drive!"
 - Tags: 6-8 relevant tags
-- Write as if YOU are the seller — personal, direct, no dealership language
+
+STRICT RULES — violation means the listing is unusable:
+- NEVER say 'selling personally', 'selling my car', 'I own this', 'I no longer need it', 'looking to sell', 'asking price', or ANY language implying private ownership
+- NEVER open with anything about yourself — open with the car
+- You are presenting inventory as a sales professional, NOT selling your personal property
 - NEVER mention a dealership name, "come in", "visit us", or "our lot"
 
 Respond with ONLY valid JSON:
@@ -119,6 +127,7 @@ Respond with ONLY valid JSON:
     message = await _client.messages.create(
         model="claude-sonnet-4-20250514",
         max_tokens=1000,
+        system=system_prompt,
         messages=[{"role": "user", "content": prompt}],
     )
 
