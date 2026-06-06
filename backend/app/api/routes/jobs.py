@@ -122,6 +122,7 @@ async def _run_pipeline(job_id: int, user_id: int):
                     theme=job.theme or "family",
                     salesperson_name=user.full_name,
                     dealership_name=None,
+                    phone_number=user.phone_number or None,
                     include_cta=(job.video_type != "with_outro"),
                 )
             await _update_job(session, job, generated_script=json.dumps(script), progress_pct=50)

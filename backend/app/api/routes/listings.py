@@ -111,6 +111,14 @@ async def generate_listing(
         lower = text.lower()
         return any(phrase in lower for phrase in _OWNERSHIP_PHRASES)
 
+    if current_user.phone_number:
+        cta_instruction = (
+            f"End with: 'DM me or call/text {current_user.phone_number} — "
+            f"I\\'d love to help you find your next car!'"
+        )
+    else:
+        cta_instruction = "End with: 'DM me for more info or to schedule a test drive!'"
+
     def _build_prompt(retry_note: str = "") -> str:
         return f"""Write a social media vehicle post for a car salesperson showcasing a vehicle.
 {retry_note}
@@ -124,7 +132,7 @@ FORMAT (keep this social-media style with emojis and bullets):
 • Opening: 1 engaging sentence about the vehicle (lead with the car name/year, not "I")
 • 3-5 bullet points with emojis highlighting key features and specs
 • 1-2 sentences on condition/appearance (e.g. "Exterior is clean", "Cabin is in great shape")
-• CTA: end with "Send me a message!" or "DM me to schedule a test drive!"
+• CTA: {cta_instruction}
 • Tags: 6-8 relevant hashtags
 
 IMPORTANT: You are presenting this vehicle as a salesperson — you did NOT own or drive it.
@@ -252,6 +260,11 @@ async def generate_custom_script(
     payload: ScriptRequest,
     current_user: Annotated[User, Depends(get_current_user)],
 ):
+    if current_user.phone_number:
+        script_cta = f'End with: "Send me a message or call/text {current_user.phone_number}!"'
+    else:
+        script_cta = 'End with: "Send me a message today!" or similar personal CTA'
+
     message = await _client.messages.create(
         model="claude-sonnet-4-20250514",
         max_tokens=500,
@@ -264,7 +277,7 @@ Vehicle: {payload.vehicle_info}
 Their style/prompt: {payload.custom_prompt}
 
 Write a natural, conversational script (60-70 words) that captures their style.
-End with "Send me a message today!" or similar personal CTA.
+{script_cta}
 Return ONLY the script text, no labels or formatting."""
         }]
     )

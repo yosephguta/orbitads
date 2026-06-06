@@ -52,6 +52,7 @@ async def generate_ad_script(
     theme: str,
     salesperson_name: Optional[str] = None,
     dealership_name: Optional[str] = None,
+    phone_number: Optional[str] = None,
     include_cta: bool = True,
 ) -> dict:
     """
@@ -83,11 +84,18 @@ and always end with a clear call to action."""
     sp_line = f"The salesperson's name is {salesperson_name}." if salesperson_name else ""
 
     if include_cta:
-        cta_rules = (
-            "- The CTA must always be: \"Send me a message\" or \"DM me\" or \"Message me today\"\n"
-            "- End with something like: \"Message me today and let's make a deal!\""
-        )
-        cta_instruction = "One closing sentence ending with a message/DM call to action — no dealership name"
+        if phone_number:
+            cta_rules = (
+                f"- End with: \"Send me a message or call/text me at {phone_number}!\"\n"
+                f"- The phone number must appear verbatim: {phone_number}"
+            )
+            cta_instruction = f"One closing sentence ending with 'call/text {phone_number}'"
+        else:
+            cta_rules = (
+                "- The CTA must always be: \"Send me a message\" or \"DM me\" or \"Message me today\"\n"
+                "- End with something like: \"Message me today and let's make a deal!\""
+            )
+            cta_instruction = "One closing sentence ending with a message/DM call to action — no dealership name"
     else:
         cta_rules = (
             "- Do NOT include any verbal call to action at the end\n"

@@ -52,6 +52,7 @@ class UserRead(SQLModel):
     role: str
     subscription_status: str
     elevenlabs_voice_id: Optional[str]
+    phone_number: Optional[str]
     trial_ends_at: Optional[datetime]
     created_at: datetime
 
@@ -61,3 +62,4 @@ class UserUpdate(SQLModel):
     full_name: Optional[str] = None
     dealership_name: Optional[str] = None
     elevenlabs_voice_id: Optional[str] = None
+    phone_number: Optional[str] = None
