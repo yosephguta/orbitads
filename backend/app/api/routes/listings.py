@@ -82,7 +82,7 @@ async def generate_listing(
     payload: GenerateRequest,
     current_user: Annotated[User, Depends(get_current_user)],
 ):
-    """Generate a Facebook Marketplace listing using Claude."""
+    """Generate a facebook marketplace listing using Claude."""
     vehicle_info = " ".join(filter(None, [
         payload.year,
         payload.make.title() if payload.make else None,
@@ -94,46 +94,66 @@ async def generate_listing(
     mileage_str = payload.mileage or "Contact for mileage"
     dealer      = payload.dealership_name or current_user.dealership_name or "Our Dealership"
 
-    system_prompt = """You are a professional car salesperson writing a Facebook Marketplace vehicle listing.
-You are presenting a vehicle from your dealership's inventory to potential buyers.
-Write in first person as the salesperson but NEVER imply you personally own the car.
-Focus entirely on the vehicle's merits and how to contact you."""
+    system_prompt = (
+        "You are a car salesperson writing a social media post to showcase a vehicle you have available. "
+        "You are the salesperson, not the owner. Describe the car the way a professional would present "
+        "inventory to a buyer — focus entirely on the vehicle's features, condition, and value."
+    )
 
-    prompt = f"""Write a Facebook Marketplace vehicle listing for this car.
+    # Phrases that indicate private ownership — never acceptable in the description
+    _OWNERSHIP_PHRASES = [
+        "i've", "i have ", "i took", "i kept", "i loved", "i maintained", "i babied",
+        "i'm selling", "selling my", "my car", "my vehicle", "my personal",
+        "time to move", "moving on", "day one", "new chapter", "i no longer",
+    ]
 
+    def _has_ownership_language(text: str) -> bool:
+        lower = text.lower()
+        return any(phrase in lower for phrase in _OWNERSHIP_PHRASES)
+
+    def _build_prompt(retry_note: str = "") -> str:
+        return f"""Write a social media vehicle post for a car salesperson showcasing a vehicle.
+{retry_note}
 Vehicle: {vehicle_info}
 Price: {price_clean}
 Mileage: {mileage_str}
 VIN: {payload.vin or 'Available on request'}
 
-Requirements:
-- Title: max 100 chars — "Year Make Model Trim - $Price" (NO dealership name)
-- Description: 200-300 words, conversational and personal tone
-  * Opening must be about the CAR: 'Check out this...', 'This {vehicle_info} is...', or 'Looking for a...'
-  * Key features with emojis as bullet points
-  * Brief condition note
-  * End with: "Send me a message and let's talk!" or "DM me for more info or to schedule a test drive!"
-- Tags: 6-8 relevant tags
+FORMAT (keep this social-media style with emojis and bullets):
+• Title: max 100 chars — "Year Make Model Trim - $Price", no dealership name
+• Opening: 1 engaging sentence about the vehicle (lead with the car name/year, not "I")
+• 3-5 bullet points with emojis highlighting key features and specs
+• 1-2 sentences on condition/appearance (e.g. "Exterior is clean", "Cabin is in great shape")
+• CTA: end with "Send me a message!" or "DM me to schedule a test drive!"
+• Tags: 6-8 relevant hashtags
 
-STRICT RULES — violation means the listing is unusable:
-- NEVER say 'selling personally', 'selling my car', 'I own this', 'I no longer need it', 'looking to sell', 'asking price', or ANY language implying private ownership
-- NEVER open with anything about yourself — open with the car
-- You are presenting inventory as a sales professional, NOT selling your personal property
-- NEVER mention a dealership name, "come in", "visit us", or "our lot"
+IMPORTANT: You are presenting this vehicle as a salesperson — you did NOT own or drive it.
+Write about what the car offers the buyer. Never write from a private owner's perspective.
 
-Respond with ONLY valid JSON:
-{{"title": "...", "description": "...", "tags": ["...", "..."]}}"""
+Respond with ONLY valid JSON: {{"title": "...", "description": "...", "tags": [...]}}"""
 
-    message = await _client.messages.create(
-        model="claude-sonnet-4-20250514",
-        max_tokens=1000,
-        system=system_prompt,
-        messages=[{"role": "user", "content": prompt}],
-    )
+    async def _call_claude(retry_note: str = "") -> dict:
+        msg = await _client.messages.create(
+            model="claude-sonnet-4-20250514",
+            max_tokens=1000,
+            system=system_prompt,
+            messages=[{"role": "user", "content": _build_prompt(retry_note)}],
+        )
+        raw = msg.content[0].text.strip()
+        raw = raw.replace("```json", "").replace("```", "").strip()
+        return json.loads(raw)
 
-    raw  = message.content[0].text.strip()
-    raw  = raw.replace("```json", "").replace("```", "").strip()
-    data = json.loads(raw)
+    data = await _call_claude()
+
+    # Hard check — if ownership language slipped through, retry once with an explicit note
+    if _has_ownership_language(data.get("description", "")):
+        data = await _call_claude(
+            retry_note=(
+                "\nNOTE: Do not use 'I've', 'I have', 'selling my', 'my car', or any language "
+                "implying you personally own or have history with this vehicle. "
+                "Write about the car's features and condition only.\n"
+            )
+        )
 
     return GenerateResponse(
         title=data.get("title", vehicle_info),
