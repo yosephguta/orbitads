@@ -105,8 +105,12 @@ async def login(
             detail="Account is disabled.",
         )
 
-    # Unverified users can still log in — they're blocked at the feature
-    # level by require_active_subscription, not at login.
+    if not user.is_verified:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Please verify your email before signing in. Check your inbox for the verification link.",
+        )
+
     token = create_access_token(user_id=user.id)
     return {"access_token": token, "token_type": "bearer"}
 
