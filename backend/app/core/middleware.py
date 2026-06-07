@@ -23,6 +23,16 @@ def require_active_subscription(
     - cancelled
     - past_due
     """
+    # Email must be verified before any feature access
+    if not current_user.is_verified:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={
+                "error": "email_not_verified",
+                "message": "Please verify your email address before using OrbitAds. Check your inbox for the verification link.",
+            }
+        )
+
     now = datetime.now(timezone.utc)
 
     # Active paying subscriber — always allow

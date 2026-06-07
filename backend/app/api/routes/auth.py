@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import uuid
 from datetime import datetime, timezone, timedelta
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi.responses import RedirectResponse
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession as SQLModelAsyncSession
@@ -16,40 +18,25 @@ from app.core.security import (
     verify_password,
 )
 from app.models.user import User, UserCreate, UserRead, UserUpdate
+from app.services.email import send_verification_email, send_welcome_email
 
-# ── Router ────────────────────────────────────────────────────
-# All routes in this file will be prefixed with /auth
-# So register becomes /api/v1/auth/register (the /api/v1 comes from main.py)
 router = APIRouter(prefix="/auth", tags=["auth"])
 
 
 # ── Register ──────────────────────────────────────────────────
-@router.post("/register", response_model=UserRead, status_code=status.HTTP_201_CREATED)
+@router.post("/register", status_code=status.HTTP_201_CREATED)
 async def register(
     payload: UserCreate,
     session: Annotated[SQLModelAsyncSession, Depends(get_session)],
 ):
-    """
-    Create a new salesperson account.
-
-    Steps:
-    1. Check if email is already taken
-    2. Hash the password
-    3. Save the new user to the database
-    4. Return the user (UserRead excludes the hashed password)
-    """
-    # Check for duplicate email
-    # select(User).where(...) builds a SQL query: SELECT * FROM users WHERE email = ?
     result = await session.exec(select(User).where(User.email == payload.email))
-    existing = result.first()
-
-    if existing:
+    if result.first():
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="An account with this email already exists.",
         )
 
-# Create the user — hash the password before storing
+    token = str(uuid.uuid4())
     user = User(
         email=payload.email,
         full_name=payload.full_name,
@@ -58,13 +45,42 @@ async def register(
         role="salesperson",
         subscription_status="trial",
         trial_ends_at=datetime.now(timezone.utc) + timedelta(days=14),
+        is_verified=False,
+        verification_token=token,
     )
-	
-    session.add(user)       # stage the insert
-    await session.commit()  # write to database
-    await session.refresh(user)  # reload from DB to get the auto-assigned id
 
-    return user
+    session.add(user)
+    await session.commit()
+    await session.refresh(user)
+
+    send_verification_email(to=user.email, full_name=user.full_name, token=token)
+
+    return {"message": "Account created! Please check your email to verify your account."}
+
+
+# ── Verify email ───────────────────────────────────────────────
+@router.get("/verify")
+async def verify_email(
+    token: Annotated[str, Query()],
+    session: Annotated[SQLModelAsyncSession, Depends(get_session)],
+):
+    result = await session.exec(
+        select(User).where(User.verification_token == token)
+    )
+    user = result.first()
+
+    if not user:
+        return RedirectResponse("https://dealersorbit.com/orbitads/?verified=false")
+
+    user.is_verified = True
+    user.verification_token = None
+    user.updated_at = datetime.now(timezone.utc)
+    session.add(user)
+    await session.commit()
+
+    send_welcome_email(to=user.email, full_name=user.full_name)
+
+    return RedirectResponse("https://dealersorbit.com/orbitads/?verified=true")
 
 
 # ── Login ─────────────────────────────────────────────────────
@@ -73,25 +89,9 @@ async def login(
     form: Annotated[OAuth2PasswordRequestForm, Depends()],
     session: Annotated[SQLModelAsyncSession, Depends(get_session)],
 ):
-    """
-    Log in with email and password. Returns a JWT token.
-
-    OAuth2PasswordRequestForm expects form data with:
-      username  (we use email here — standard OAuth2 calls it username)
-      password
-
-    The token returned looks like:
-      {"access_token": "eyJhbGci...", "token_type": "bearer"}
-
-    The frontend stores this and sends it with every future request:
-      Authorization: Bearer eyJhbGci...
-    """
-    # Look up user by email
     result = await session.exec(select(User).where(User.email == form.username))
     user = result.first()
 
-    # Check user exists AND password is correct
-    # We do both checks together so we don't reveal whether the email exists
     if not user or not verify_password(form.password, user.hashed_password):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -105,7 +105,8 @@ async def login(
             detail="Account is disabled.",
         )
 
-    # Create and return the JWT token
+    # Unverified users can still log in — they're blocked at the feature
+    # level by require_active_subscription, not at login.
     token = create_access_token(user_id=user.id)
     return {"access_token": token, "token_type": "bearer"}
 
@@ -115,17 +116,6 @@ async def login(
 async def me(
     current_user: Annotated[User, Depends(get_current_user)],
 ):
-    """
-    Return the currently logged-in user's profile.
-
-    get_current_user (from security.py) handles everything:
-    - Reads the token from the Authorization header
-    - Verifies the signature
-    - Loads the user from the database
-    - Returns the user here, or raises 401 if anything is wrong
-
-    The frontend calls this on page load to check if the session is still valid.
-    """
     return current_user
 
 
@@ -135,7 +125,6 @@ async def update_me(
     current_user: Annotated[User, Depends(get_current_user)],
     session: Annotated[SQLModelAsyncSession, Depends(get_session)],
 ):
-    """Update the current user's profile — voice ID, avatar ID, etc."""
     for key, value in payload.model_dump(exclude_unset=True).items():
         setattr(current_user, key, value)
     current_user.updated_at = datetime.now(timezone.utc)

@@ -51,6 +51,9 @@ class Settings(BaseSettings):
     # Used for the job queue in Phase 2
     redis_url: str = "redis://localhost:6379/0"
 
+    # ── Email (Resend) ────────────────────────────────────────────
+    resend_api_key: str = ""
+
     # ── Stripe ────────────────────────────────────────────────────
     stripe_secret_key: str
     stripe_webhook_secret: str

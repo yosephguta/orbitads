@@ -10,6 +10,8 @@ class UserBase(SQLModel):
     full_name: str = Field(max_length=255)
     dealership_name: str = Field(max_length=255, default="")
     is_active: bool = Field(default=True)
+    is_verified: bool = Field(default=False)
+    verification_token: Optional[str] = Field(default=None, max_length=255)
     elevenlabs_voice_id: Optional[str] = Field(default=None, max_length=255)
     phone_number: Optional[str] = Field(default=None, max_length=20)
 
@@ -49,6 +51,7 @@ class UserRead(SQLModel):
     full_name: str
     dealership_name: str
     is_active: bool
+    is_verified: bool
     role: str
     subscription_status: str
     elevenlabs_voice_id: Optional[str]
