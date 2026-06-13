@@ -38,6 +38,7 @@ class Job(SQLModel, table=True):
     photos_s3_keys: Optional[str] = Field(default=None, sa_column=Column(Text))
     voice_s3_key: Optional[str] = Field(default=None, max_length=512)
     car_photo_urls: Optional[str] = Field(default=None, sa_column=Column(Text))
+    price: Optional[str] = Field(default=None, max_length=50)
 
     # ── Pipeline outputs ──────────────────────────────────────
     vehicle_data: Optional[str] = Field(default=None, sa_column=Column(Text))
@@ -66,6 +67,7 @@ class JobCreate(SQLModel):
     video_type: str = "slideshow"
     outro_video_id: Optional[int] = None
     custom_script: Optional[str] = None
+    price: Optional[str] = None
 
 
 class JobRead(SQLModel):

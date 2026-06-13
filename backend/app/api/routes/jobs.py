@@ -29,6 +29,7 @@ from app.services.s3 import (
     create_presigned_download_url,
     get_audio_duration,
 )
+from app.services.audio_utils import get_audio_level, calculate_volume_multiplier
 
 router = APIRouter(
     prefix="/jobs",
@@ -124,6 +125,7 @@ async def _run_pipeline(job_id: int, user_id: int):
                     dealership_name=None,
                     phone_number=user.phone_number or None,
                     include_cta=(job.video_type != "with_outro"),
+                    price=job.price or None,
                 )
             await _update_job(session, job, generated_script=json.dumps(script), progress_pct=50)
         except Exception as e:
@@ -143,6 +145,24 @@ async def _run_pipeline(job_id: int, user_id: int):
                     text=script["full_script"],
                     voice_id=user.elevenlabs_voice_id,
                 )
+
+                # Normalize voiceover loudness to -22 dBFS (quieter for video)
+                try:
+                    from pydub import AudioSegment
+                    from pydub.effects import normalize
+                    import io as _io
+
+                    seg = AudioSegment.from_mp3(_io.BytesIO(audio_bytes))
+                    seg = normalize(seg)
+                    target_dBFS = -22.0
+                    seg = seg.apply_gain(target_dBFS - seg.dBFS)
+                    buf = _io.BytesIO()
+                    seg.export(buf, format="mp3", bitrate="192k")
+                    audio_bytes = buf.getvalue()
+                    print(f"Audio normalized to {target_dBFS} dBFS")
+                except Exception as norm_err:
+                    print(f"Audio normalization failed (non-fatal): {norm_err}")
+
                 audio_key = make_audio_output_key(job.id)
                 upload_bytes(audio_bytes, audio_key, "audio/mpeg")
                 audio_s3_key = audio_key
@@ -191,15 +211,27 @@ async def _run_pipeline(job_id: int, user_id: int):
                 from app.services.vin_decoder import vehicle_summary
                 v_summary = vehicle_summary(vd) if vd else "Visit us today"
 
-                # Fetch outro clip when requested
+                # Fetch outro clip and calculate slideshow volume to match
                 outro_url = None
                 outro_duration = 8.0
+                slideshow_volume = 1.0
                 if job.video_type == "with_outro" and job.outro_video_id:
                     outro = await session.get(OutroVideo, job.outro_video_id)
                     if outro and outro.user_id == user_id:
                         outro_url = create_presigned_download_url(outro.s3_key, expires_in=3600)
                         outro_duration = outro.duration_seconds or 8.0
                         print(f"Outro: {outro.name}, {outro_duration}s")
+
+                        # Measure outro audio level and reduce slideshow volume to match
+                        try:
+                            outro_level = await get_audio_level(outro.s3_key)
+                            if outro_level is not None:
+                                voiceover_target = -22.0  # normalized voiceover level
+                                slideshow_volume = calculate_volume_multiplier(outro_level, voiceover_target)
+                                print(f"Audio balance: outro={outro_level:.1f}dBFS, slideshow_volume={slideshow_volume:.2f}")
+                        except Exception as e:
+                            print(f"Audio level measurement failed, using default: {e}")
+                            slideshow_volume = 1.0
                     else:
                         print("Outro not found — assembling slideshow only")
 
@@ -213,6 +245,7 @@ async def _run_pipeline(job_id: int, user_id: int):
                     brand_color="#C4122F",
                     outro_video_url=outro_url,
                     outro_duration=outro_duration,
+                    slideshow_volume=slideshow_volume,
                 )
 
                 render_id = await submit_render(timeline)
@@ -300,6 +333,7 @@ async def create_job(
         listing_url=payload.listing_url,
         theme=payload.theme,
         custom_script=payload.custom_script or None,
+        price=payload.price or None,
         video_type=payload.video_type,
         outro_video_id=payload.outro_video_id,
         photos_s3_keys=payload.photos_s3_keys,

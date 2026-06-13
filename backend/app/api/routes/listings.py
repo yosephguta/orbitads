@@ -251,6 +251,77 @@ async def mark_posted(
     await session.commit()
     return {"success": True}
 
+class FbPostCaptionRequest(BaseModel):
+    year:    Optional[str] = None
+    make:    Optional[str] = None
+    model:   Optional[str] = None
+    trim:    Optional[str] = None
+    price:   Optional[str] = None
+    mileage: Optional[str] = None
+    theme:   str = "hype"
+
+
+class FbPostCaptionResponse(BaseModel):
+    caption: str
+
+
+_THEME_TONES = {
+    "hype":      "High energy, excitement, and urgency. Use lots of emojis. Make it feel like a can't-miss opportunity.",
+    "casual":    "Relaxed and conversational. Friendly, low-key, approachable. A few emojis but not over the top.",
+    "luxury":    "Sophisticated and premium. Emphasize quality, refinement, and prestige. Minimal but tasteful emojis.",
+    "outdoorsy": "Adventure-focused. Emphasize capability, ruggedness, and outdoor lifestyle. Use nature/adventure emojis.",
+    "family":    "Warm and family-friendly. Emphasize safety, space, reliability, and practicality.",
+}
+
+
+@router.post("/generate-fb-post-caption", response_model=FbPostCaptionResponse)
+async def generate_fb_post_caption(
+    payload: FbPostCaptionRequest,
+    current_user: Annotated[User, Depends(get_current_user)],
+):
+    """Generate a themed Facebook post caption for a completed job."""
+    vehicle_info = " ".join(filter(None, [
+        payload.year,
+        payload.make.title() if payload.make else None,
+        payload.model,
+        payload.trim,
+    ])) or "Vehicle"
+
+    price_clean  = payload.price or "Call for price"
+    mileage_str  = payload.mileage or "N/A"
+    tone         = _THEME_TONES.get(payload.theme, _THEME_TONES["hype"])
+
+    if current_user.phone_number:
+        cta = f"DM me or call/text {current_user.phone_number} to schedule a test drive!"
+    else:
+        cta = "DM me for more info or to schedule a test drive!"
+
+    prompt = f"""Write a short Facebook Marketplace post for a car salesperson showcasing this vehicle.
+
+Vehicle: {vehicle_info}
+Price: {price_clean}
+Mileage: {mileage_str}
+
+Tone: {tone}
+
+Requirements:
+- 3-6 lines, social-media style
+- Include 2-4 key selling points with emojis
+- End with this exact CTA: "{cta}"
+- No title line — body text only
+- Never use ownership language (e.g. "I've owned", "my car", "selling my")
+- You are a salesperson presenting dealership inventory, not a private seller
+
+Return ONLY the caption text. No JSON, no quotes, no extra formatting."""
+
+    msg = await _client.messages.create(
+        model="claude-sonnet-4-20250514",
+        max_tokens=400,
+        messages=[{"role": "user", "content": prompt}],
+    )
+    return FbPostCaptionResponse(caption=msg.content[0].text.strip())
+
+
 class ScriptRequest(BaseModel):
     vehicle_info:  str
     custom_prompt: str

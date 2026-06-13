@@ -54,6 +54,7 @@ async def generate_ad_script(
     dealership_name: Optional[str] = None,
     phone_number: Optional[str] = None,
     include_cta: bool = True,
+    price: Optional[str] = None,
 ) -> dict:
     """
     Generate a 30-second ad script for a vehicle using Claude.
@@ -104,9 +105,12 @@ and always end with a clear call to action."""
         )
         cta_instruction = "One natural closing sentence that wraps up the benefits — NO call to action, the outro video handles that"
 
+    price_line = f"PRICE: {price}" if price else ""
+
     user_prompt = f"""Write a 30-second video ad script for a car salesperson posting on social media.
 
 VEHICLE: {v_summary}
+{price_line}
 THEME: {theme} — focus on: {guidance}
 {sp_line}
 

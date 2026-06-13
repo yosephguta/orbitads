@@ -14,6 +14,7 @@ class UserBase(SQLModel):
     verification_token: Optional[str] = Field(default=None, max_length=255)
     elevenlabs_voice_id: Optional[str] = Field(default=None, max_length=255)
     phone_number: Optional[str] = Field(default=None, max_length=20)
+    outro_volume: float = Field(default=2.0)
 
     # ── Multi-user / billing fields ───────────────────────────
     role: str = Field(default="salesperson", max_length=50)  # admin | salesperson
