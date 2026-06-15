@@ -399,8 +399,8 @@ async def check_sold(
 
                 is_sold = False
 
-                # Hard 404
-                if resp.status_code == 404:
+                # Hard 404 or 410 Gone
+                if resp.status_code in (404, 410):
                     is_sold = True
                 elif resp.status_code == 200:
                     text = resp.text
