@@ -373,6 +373,9 @@ async def check_sold(
     Called by the extension daily.
     Returns list of listing IDs that appear to be sold.
     """
+    # Domains that block datacenter IPs — must be checked from the extension instead
+    EXTENSION_ONLY_DOMAINS = {'jbakia.com', 'www.jbakia.com'}
+
     sold_ids = []
 
     async with httpx.AsyncClient(timeout=30) as client:
@@ -382,6 +385,15 @@ async def check_sold(
                 continue
             if not listing.listing_url:
                 continue
+
+            try:
+                from urllib.parse import urlparse
+                domain = urlparse(listing.listing_url).hostname or ''
+                if domain in EXTENSION_ONLY_DOMAINS:
+                    print(f'Listing {listing_id} is on {domain} — skipping backend check (use extension)')
+                    continue
+            except Exception:
+                pass
 
             try:
                 resp = await client.get(
