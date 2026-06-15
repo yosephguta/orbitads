@@ -11,6 +11,7 @@ Handles:
   5. POST /listings/check-sold   — check if vehicles are still listed
 """
 
+import asyncio
 import json
 import httpx
 from datetime import datetime, timezone
@@ -369,7 +370,7 @@ async def check_sold(
     """
     sold_ids = []
 
-    async with httpx.AsyncClient(timeout=10.0) as client:
+    async with httpx.AsyncClient(timeout=30) as client:
         for listing_id in payload.listing_ids:
             listing = await session.get(Listing, listing_id)
             if not listing or listing.user_id != current_user.id:
@@ -380,25 +381,65 @@ async def check_sold(
             try:
                 resp = await client.get(
                     listing.listing_url,
-                    headers={"User-Agent": "Mozilla/5.0"},
+                    headers={
+                        'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                        'Accept': 'text/html,application/xhtml+xml',
+                        'Accept-Language': 'en-US,en;q=0.9',
+                        'Connection': 'keep-alive',
+                    },
                     follow_redirects=True,
                 )
 
+                # Rate limited — skip, try again later
+                if resp.status_code == 429:
+                    print(f'Rate limited for listing {listing_id} — skipping')
+                    listing.last_checked_at = datetime.now(timezone.utc)
+                    await session.commit()
+                    continue
+
                 is_sold = False
+
+                # Hard 404
                 if resp.status_code == 404:
                     is_sold = True
                 elif resp.status_code == 200:
-                    text = resp.text.lower()
-                    sold_phrases = [
-                        "vehicle not found", "listing not found",
-                        "no longer available", "this vehicle has been sold",
-                        "vehicle sold", "page not found",
-                    ]
-                    if any(phrase in text for phrase in sold_phrases):
-                        is_sold = True
-                    elif listing.vin and listing.vin.lower() not in text:
-                        is_sold = True
+                    text = resp.text
 
+                    # JBA-specific sold indicators
+                    # JBA returns 200 with custom alias-404 page when vehicle is gone
+                    jba_indicators = [
+                        'alias-404',                   # CSS class on html element
+                        'goneAliasRedirect',           # JS variable for missing VDP
+                        'redirectFromMissingVDP=true', # Query param in redirect URL
+                    ]
+
+                    # Generic sold indicators for other dealerships
+                    generic_indicators = [
+                        'this vehicle has been sold',
+                        'vehicle is no longer available',
+                        'no longer available',
+                        'vehicle sold',
+                        'page not found',
+                    ]
+
+                    all_indicators = jba_indicators + generic_indicators
+                    is_sold = any(indicator in text for indicator in all_indicators)
+
+                    # Also check if redirected away from VDP to inventory search
+                    final_url = str(resp.url)
+                    original_path = listing.listing_url.split('jbakia.com')[-1] if 'jbakia' in listing.listing_url else ''
+                    if original_path and original_path not in final_url and 'inventory' in final_url:
+                        is_sold = True
+                        print(f'Listing {listing_id} redirected to inventory — marking sold')
+                else:
+                    # Unknown status — skip
+                    print(f'Unexpected status {resp.status_code} — skipping listing {listing_id}')
+                    continue
+
+                # Add delay between requests to avoid rate limiting
+                await asyncio.sleep(2)
+
+                # Update last checked
                 listing.last_checked_at = datetime.now(timezone.utc)
                 listing.updated_at      = datetime.now(timezone.utc)
 
@@ -406,12 +447,13 @@ async def check_sold(
                     listing.is_sold          = True
                     listing.sold_detected_at = datetime.now(timezone.utc)
                     sold_ids.append(listing_id)
+                    print(f'Listing {listing_id} marked as SOLD')
 
                 session.add(listing)
+                await session.commit()
 
             except Exception as e:
                 print(f"Sold check failed for listing {listing_id}: {e}")
                 continue
 
-    await session.commit()
     return {"sold_ids": sold_ids}
