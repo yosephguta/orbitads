@@ -399,9 +399,26 @@ async def check_sold(
 
                 is_sold = False
 
-                # Hard 404 or 410 Gone
+                # Hard 404 or 410 Gone — confirm with a second request to avoid false positives
                 if resp.status_code in (404, 410):
-                    is_sold = True
+                    await asyncio.sleep(3)
+                    confirm = await client.get(
+                        listing.listing_url,
+                        headers={
+                            'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                            'Accept': 'text/html,application/xhtml+xml',
+                            'Accept-Language': 'en-US,en;q=0.9',
+                            'Connection': 'keep-alive',
+                        },
+                        follow_redirects=True,
+                    )
+                    if confirm.status_code in (404, 410):
+                        is_sold = True
+                    else:
+                        print(f'Listing {listing_id} got {resp.status_code} then {confirm.status_code} on confirm — skipping')
+                        listing.last_checked_at = datetime.now(timezone.utc)
+                        await session.commit()
+                        continue
                 elif resp.status_code == 200:
                     text = resp.text
 
