@@ -23,6 +23,10 @@ class Settings(BaseSettings):
     environment: str = "development"   # development | production
     debug: bool = True
 
+    # ── Development Only ──────────────────────────────────────
+    skip_email_verification: bool = False   # bypass verification in dev
+    dev_test_email: str = ""                # email that bypasses trial expiry (dev only)
+
     # ── Database ──────────────────────────────────────────────
     # Full connection string including username, password, host, db name
     # Format: postgresql+asyncpg://USER:PASSWORD@HOST:PORT/DBNAME

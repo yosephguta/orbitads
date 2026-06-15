@@ -77,6 +77,7 @@ def build_ad_timeline_photo_only(
     brand_color: str = DEFAULT_BRAND_COLOR,
     outro_video_url: Optional[str] = None,
     outro_duration: float = 8.0,
+    slideshow_volume: float = 1.0,
 ) -> dict:
     """
     Build a Shotstack timeline for a slideshow ad with optional outro clip.
@@ -108,7 +109,7 @@ def build_ad_timeline_photo_only(
 
     # ── Audio — slideshow duration only ──────────────────────
     clips.append({
-        "asset": {"type": "audio", "src": audio_url, "volume": 1},
+        "asset": {"type": "audio", "src": audio_url, "volume": slideshow_volume},
         "start":  0,
         "length": duration,
     })
@@ -156,7 +157,6 @@ def build_ad_timeline_photo_only(
                 "type":   "video",
                 "src":    outro_video_url,
                 "trim":   0,
-                "volume": 1,
             },
             "start":  duration,
             "length": outro_duration,

@@ -11,6 +11,7 @@ from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession as SQLModelAsyncSession
 
 from app.core.database import get_session
+from app.core.config import get_settings
 from app.core.security import (
     create_access_token,
     get_current_user,
@@ -105,7 +106,8 @@ async def login(
             detail="Account is disabled.",
         )
 
-    if not user.is_verified:
+    settings = get_settings()
+    if not user.is_verified and not settings.skip_email_verification:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Please verify your email before signing in. Check your inbox for the verification link.",

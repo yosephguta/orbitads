@@ -4,6 +4,7 @@ from typing import Annotated
 from fastapi import Depends, HTTPException, status
 
 from app.core.security import get_current_user
+from app.core.config import get_settings
 from app.models.user import User
 
 
@@ -23,8 +24,10 @@ def require_active_subscription(
     - cancelled
     - past_due
     """
-    # Email must be verified before any feature access
-    if not current_user.is_verified:
+    settings = get_settings()
+
+    # Email must be verified before any feature access (unless skipped in dev)
+    if not current_user.is_verified and not settings.skip_email_verification:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail={
@@ -39,8 +42,12 @@ def require_active_subscription(
     if current_user.subscription_status == "active":
         return current_user
 
-    # Trial — check if still within window
+    # Trial — check if still within window (unless dev test email)
     if current_user.subscription_status == "trial":
+        # Bypass trial expiry for dev test account
+        if settings.dev_test_email and current_user.email == settings.dev_test_email:
+            return current_user
+
         if current_user.trial_ends_at is None:
             # No trial end date set — allow but this shouldn't happen
             return current_user
