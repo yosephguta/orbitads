@@ -77,6 +77,11 @@ class SoldCheckRequest(BaseModel):
     listing_ids: list[int]
 
 
+class UpdateSoldStatusRequest(BaseModel):
+    sold_ids:    list[int]
+    checked_ids: list[int]
+
+
 # ── Generate FB listing description ──────────────────────────
 @router.post("/generate", response_model=GenerateResponse)
 async def generate_listing(
@@ -474,3 +479,37 @@ async def check_sold(
                 continue
 
     return {"sold_ids": sold_ids}
+
+
+# ── Report sold check results from extension ──────────────────
+@router.post("/update-sold-status")
+async def update_sold_status(
+    payload: UpdateSoldStatusRequest,
+    current_user: Annotated[User, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_session)],
+):
+    """
+    Called by the extension after it checks listing URLs directly.
+    Extension passes which listings were checked and which are confirmed sold.
+    """
+    now = datetime.now(timezone.utc)
+    confirmed_sold = []
+
+    for listing_id in payload.checked_ids:
+        listing = await session.get(Listing, listing_id)
+        if not listing or listing.user_id != current_user.id:
+            continue
+
+        listing.last_checked_at = now
+        listing.updated_at      = now
+
+        if listing_id in payload.sold_ids and not listing.is_sold:
+            listing.is_sold          = True
+            listing.sold_detected_at = now
+            confirmed_sold.append(listing_id)
+            print(f'Listing {listing_id} marked as SOLD via extension check')
+
+        session.add(listing)
+
+    await session.commit()
+    return {"sold_ids": confirmed_sold}
