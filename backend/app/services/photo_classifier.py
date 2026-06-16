@@ -111,7 +111,7 @@ async def classify_photo(image_url: str) -> str:
 
         # Ask Claude to classify the photo
         message = await _client.messages.create(
-            model="claude-sonnet-4-20250514",
+            model="claude-sonnet-4-6",
             max_tokens=20,  # we only need one word back
             messages=[
                 {

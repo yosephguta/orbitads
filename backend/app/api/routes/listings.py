@@ -148,7 +148,7 @@ Respond with ONLY valid JSON: {{"title": "...", "description": "...", "tags": [.
 
     async def _call_claude(retry_note: str = "") -> dict:
         msg = await _client.messages.create(
-            model="claude-sonnet-4-20250514",
+            model="claude-sonnet-4-6",
             max_tokens=1000,
             system=system_prompt,
             messages=[{"role": "user", "content": _build_prompt(retry_note)}],
@@ -321,7 +321,7 @@ Requirements:
 Return ONLY the caption text. No JSON, no quotes, no extra formatting."""
 
     msg = await _client.messages.create(
-        model="claude-sonnet-4-20250514",
+        model="claude-sonnet-4-6",
         max_tokens=400,
         messages=[{"role": "user", "content": prompt}],
     )
@@ -343,7 +343,7 @@ async def generate_custom_script(
         script_cta = 'End with: "Send me a message today!" or similar personal CTA'
 
     message = await _client.messages.create(
-        model="claude-sonnet-4-20250514",
+        model="claude-sonnet-4-6",
         max_tokens=500,
         messages=[{
             "role": "user",

@@ -135,7 +135,7 @@ Return ONLY a JSON object with these exact keys. No markdown, no explanation, ju
     # ── Call Claude ───────────────────────────────────────────
     try:
         message = await _client.messages.create(
-            model="claude-sonnet-4-20250514",
+            model="claude-sonnet-4-6",
             max_tokens=500,
             system=system_prompt,
             messages=[
