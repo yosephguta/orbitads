@@ -239,6 +239,26 @@ async def get_listings(
 
 
 # ── Mark as posted to Facebook ────────────────────────────────
+@router.patch("/{listing_id}/clear-sold")
+async def clear_sold(
+    listing_id: int,
+    current_user: Annotated[User, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_session)],
+):
+    """Dismiss a sold flag — user has removed the car from Facebook."""
+    listing = await session.get(Listing, listing_id)
+    if not listing or listing.user_id != current_user.id:
+        raise HTTPException(status_code=404, detail="Listing not found")
+
+    listing.is_sold          = False
+    listing.sold_detected_at = None
+    listing.fb_posted        = False
+    listing.updated_at       = datetime.now(timezone.utc)
+    session.add(listing)
+    await session.commit()
+    return {"success": True}
+
+
 @router.patch("/{listing_id}/posted")
 async def mark_posted(
     listing_id: int,
