@@ -46,6 +46,7 @@ class GenerateRequest(BaseModel):
     vin:             Optional[str] = None
     dealership_name: Optional[str] = None
     listing_url:     Optional[str] = None
+    theme:           Optional[str] = 'value'
 
 
 class GenerateResponse(BaseModel):
@@ -100,6 +101,15 @@ async def generate_listing(
     mileage_str = payload.mileage or "Contact for mileage"
     dealer      = payload.dealership_name or current_user.dealership_name or "Our Dealership"
 
+    _THEME_GUIDANCE = {
+        'value':       'emphasize great pricing, value for money, smart purchase decision',
+        'performance': 'emphasize power, performance specs, and the driving experience',
+        'family':      'emphasize safety, space, reliability, and practicality for families',
+        'luxury':      'emphasize premium features, quality materials, and prestige',
+        'commuter':    'emphasize fuel efficiency, comfort, and low cost of ownership',
+    }
+    theme_guidance = _THEME_GUIDANCE.get(payload.theme or 'value', _THEME_GUIDANCE['value'])
+
     system_prompt = (
         "You are a car salesperson writing a social media post to showcase a vehicle you have available. "
         "You are the salesperson, not the owner. Describe the car the way a professional would present "
@@ -132,14 +142,21 @@ Vehicle: {vehicle_info}
 Price: {price_clean}
 Mileage: {mileage_str}
 VIN: {payload.vin or 'Available on request'}
+Theme focus: {theme_guidance}
 
 FORMAT (keep this social-media style with emojis and bullets):
 • Title: max 100 chars — "Year Make Model Trim - $Price", no dealership name
 • Opening: 1 engaging sentence about the vehicle (lead with the car name/year, not "I")
-• 3-5 bullet points with emojis highlighting key features and specs
+• 3-5 bullet points with emojis highlighting key features — each on its OWN LINE
 • 1-2 sentences on condition/appearance (e.g. "Exterior is clean", "Cabin is in great shape")
 • CTA: {cta_instruction}
 • Tags: 6-8 relevant hashtags
+
+FORMATTING — CRITICAL:
+- Each bullet point MUST be on its own line
+- Use a blank line between the opening, bullet section, condition note, CTA, and tags
+- NEVER run multiple bullet points on the same line
+- NEVER put text after an emoji on the same line as another bullet
 
 IMPORTANT: You are presenting this vehicle as a salesperson — you did NOT own or drive it.
 Write about what the car offers the buyer. Never write from a private owner's perspective.
@@ -322,23 +339,41 @@ async def generate_fb_post_caption(
     else:
         cta = "DM me for more info or to schedule a test drive!"
 
-    prompt = f"""Write a short Facebook Marketplace post for a car salesperson showcasing this vehicle.
+    prompt = f"""Write a short Facebook post caption for a car salesperson posting a vehicle.
 
 Vehicle: {vehicle_info}
 Price: {price_clean}
 Mileage: {mileage_str}
+Theme/Vibe: {tone}
 
-Tone: {tone}
+FORMATTING RULES — CRITICAL:
+- Each sentence or bullet point MUST be on its own line
+- Use a blank line between sections
+- Format like this example:
+  [Opening hook line with emoji]
 
-Requirements:
-- 3-6 lines, social-media style
-- Include 2-4 key selling points with emojis
-- End with this exact CTA: "{cta}"
-- No title line — body text only
-- Never use ownership language (e.g. "I've owned", "my car", "selling my")
-- You are a salesperson presenting dealership inventory, not a private seller
+  [emoji] Bullet point one
+  [emoji] Bullet point two
+  [emoji] Bullet point three
 
-Return ONLY the caption text. No JSON, no quotes, no extra formatting."""
+  [CTA line]
+
+  [hashtags]
+
+- NEVER write multiple sentences in the same paragraph
+- NEVER put emoji mid-sentence followed by more text on same line
+- Every emoji bullet starts a NEW line
+
+Rules:
+- Opening: one punchy line matching the theme, ends with line break
+- 3-4 bullet points each on their own line with relevant emoji
+- NO VIN number
+- NO dealership name
+- End with: "{cta}"
+- 4-5 hashtags on final line
+- Total: 80-120 words
+
+Return ONLY the caption. No labels. Preserve all line breaks exactly as written."""
 
     msg = await _client.messages.create(
         model="claude-sonnet-4-6",
