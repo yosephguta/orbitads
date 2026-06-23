@@ -82,7 +82,14 @@ dealership video ads. You write natural, conversational scripts that sound like 
 person talking — not a corporate announcement. Your scripts are punchy, benefit-focused,
 and always end with a clear call to action."""
 
-    sp_line = f"The salesperson's name is {salesperson_name}." if salesperson_name else ""
+    if salesperson_name:
+        sp_line = (
+            f"The salesperson is {salesperson_name}. "
+            "Do NOT say their name or use any first-person introduction like \"I am\", \"My name is\", or \"Hi I'm\". "
+            "The voice is a narrator presenting the vehicle on their behalf."
+        )
+    else:
+        sp_line = ""
 
     if include_cta:
         if phone_number:
@@ -115,11 +122,11 @@ THEME: {theme} — focus on: {guidance}
 {sp_line}
 
 RULES:
-- The salesperson speaks directly to camera in first person
-- Natural and conversational — sounds like a real person, not an ad
-- Total length: 70-80 words (fits exactly 30 seconds at natural speaking pace)
+- Natural and conversational — sounds like a real person talking about the car
+- Total length: 60-75 words (fits exactly 30 seconds at natural speaking pace)
 - No filler phrases like "look no further" or "don't miss out"
 - The hook must grab attention in the first 3 seconds
+- NEVER say "I'm [name]", "My name is", "Hi I'm", or any first-person name introduction
 - NEVER mention the dealership name
 - NEVER say "come visit us", "stop by", "our dealership", or "our lot"
 {cta_rules}

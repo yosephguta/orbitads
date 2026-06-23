@@ -125,6 +125,50 @@ async def me(
     return current_user
 
 
+@router.get("/voices/preloaded")
+async def get_preloaded_voices(
+    current_user: Annotated[User, Depends(get_current_user)],
+):
+    """Return preloaded voices with ElevenLabs preview URLs"""
+    import httpx
+
+    PRELOADED_VOICE_IDS = {
+        'Gubgw9l4dtIoQA9YZHgx',  # Brian
+        'onwK4e9ZLuTAKqWW03F9',  # Daniel
+        'FGY2WhTYpPnrIDTdsKH5',  # Laura
+        'OYTbf65OHHFELVut7v2H',  # Hope
+        'pNInz6obpgDQGcFmaJgB',  # Adam
+        'cjVigY5qzO86Huf0OWal',  # Eric
+        'TX3LPaxmHKxFdv7VOQHJ',  # Liam
+        'JBFqnCBsd6RMkjVDRZzb',  # George
+        'IKne3meq5aSn9XLyUdCD',  # Charlie
+        'bIHbv24MWmeRgasZH58o',  # Will
+        'pqHfZKP75CvOlQylNhV4',  # Bill
+        'iP95p4xoKVk53GoZ742B',  # Chris
+    }
+
+    settings = get_settings()
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            resp = await client.get(
+                'https://api.elevenlabs.io/v1/voices',
+                headers={'xi-api-key': settings.elevenlabs_api_key},
+            )
+            if not resp.is_success:
+                raise Exception(f'ElevenLabs API error: {resp.status_code}')
+
+            all_voices = resp.json().get('voices', [])
+            preview_map = {
+                v['voice_id']: v.get('preview_url')
+                for v in all_voices
+                if v['voice_id'] in PRELOADED_VOICE_IDS and v.get('preview_url')
+            }
+            return {'preview_urls': preview_map}
+    except Exception as e:
+        print(f'Could not fetch ElevenLabs preview URLs: {e}')
+        return {'preview_urls': {}}
+
+
 @router.patch("/me", response_model=UserRead)
 async def update_me(
     payload: UserUpdate,

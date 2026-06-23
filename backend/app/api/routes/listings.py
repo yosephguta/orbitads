@@ -402,7 +402,7 @@ async def generate_custom_script(
         max_tokens=500,
         messages=[{
             "role": "user",
-            "content": f"""Write a 30-second video ad script for this car salesperson.
+            "content": f"""Write a 30-second video ad script for a car salesperson's social media video.
 
 Vehicle: {payload.vehicle_info}
 
@@ -410,6 +410,8 @@ Their style/prompt: {payload.custom_prompt}
 
 Write a natural, conversational script (60-70 words) that captures their style.
 {script_cta}
+NEVER say "I'm [name]", "My name is", "Hi I'm", or introduce the speaker by name.
+Speak as a narrator presenting the vehicle — not as a named individual.
 Return ONLY the script text, no labels or formatting."""
         }]
     )
