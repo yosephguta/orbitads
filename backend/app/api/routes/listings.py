@@ -26,6 +26,7 @@ from app.core.database import get_session
 from app.core.security import get_current_user
 from app.models.user import User
 from app.models.listing import Listing, ListingRead
+from app.services.analytics import track_posting
 
 import anthropic
 from app.core.config import get_settings
@@ -292,7 +293,64 @@ async def mark_posted(
     listing.updated_at   = datetime.now(timezone.utc)
     session.add(listing)
     await session.commit()
+
+    try:
+        vehicle_data = {
+            'year':    listing.year,
+            'make':    listing.make,
+            'model':   listing.model,
+            'price':   listing.price,
+            'mileage': listing.mileage,
+        }
+        await track_posting(
+            session      = session,
+            user         = current_user,
+            event_type   = 'posted_marketplace',
+            listing_id   = listing.id,
+            vehicle_data = vehicle_data,
+        )
+    except Exception as e:
+        print(f'Analytics tracking failed (non-fatal): {e}')
+
     return {"success": True}
+
+
+class PostingEventRequest(BaseModel):
+    event_type:    str
+    listing_id:    Optional[int] = None
+    groups_count:  int           = 0
+    vehicle_year:  Optional[str] = None
+    vehicle_make:  Optional[str] = None
+    vehicle_model: Optional[str] = None
+    vehicle_price: Optional[str] = None
+
+
+@router.post("/track-posting")
+async def track_posting_event(
+    payload:      PostingEventRequest,
+    current_user: Annotated[User, Depends(get_current_user)],
+    session:      Annotated[AsyncSession, Depends(get_session)],
+):
+    """Track FB Post or FB Groups posting events sent from the extension."""
+    try:
+        vehicle_data = {
+            'year':  payload.vehicle_year,
+            'make':  payload.vehicle_make,
+            'model': payload.vehicle_model,
+            'price': payload.vehicle_price,
+        }
+        await track_posting(
+            session      = session,
+            user         = current_user,
+            event_type   = payload.event_type,
+            listing_id   = payload.listing_id,
+            vehicle_data = vehicle_data,
+            groups_count = payload.groups_count,
+        )
+        return {'success': True}
+    except Exception as e:
+        print(f'Posting event tracking failed: {e}')
+        return {'success': False}
 
 class FbPostCaptionRequest(BaseModel):
     year:    Optional[str] = None

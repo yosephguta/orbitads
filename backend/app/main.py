@@ -27,6 +27,8 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+from app.models.ad_event import AdEvent  # noqa — ensures table is created
+from app.models.dealership import Dealership  # noqa — ensures table is created
 from app.api.routes import auth, jobs, uploads, photos, listings, billing, outros
 app.include_router(auth.router,     prefix="/api/v1")
 app.include_router(uploads.router,  prefix="/api/v1")

@@ -17,7 +17,8 @@ class UserBase(SQLModel):
     outro_volume: float = Field(default=2.0)
 
     # ── Multi-user / billing fields ───────────────────────────
-    role: str = Field(default="salesperson", max_length=50)  # admin | salesperson
+    dealership_id: Optional[int] = Field(default=None, foreign_key='dealerships.id')
+    role: str = Field(default='independent', max_length=50)  # independent | salesperson | manager | admin
     subscription_status: str = Field(default="trial", max_length=50)  # trial | active | cancelled | past_due
     stripe_customer_id: Optional[str] = Field(default=None, max_length=255)
     stripe_subscription_id: Optional[str] = Field(default=None, max_length=255)
@@ -53,6 +54,7 @@ class UserRead(SQLModel):
     dealership_name: str
     is_active: bool
     is_verified: bool
+    dealership_id: Optional[int]
     role: str
     subscription_status: str
     elevenlabs_voice_id: Optional[str]

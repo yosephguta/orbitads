@@ -3,6 +3,9 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 from sqlmodel import SQLModel
 
 from app.core.config import get_settings
+from app.models.ad_event import AdEvent  # noqa
+from app.models.dealership import Dealership  # noqa
+from app.models.job import Job  # noqa
 from app.models.listing import Listing  # noqa
 from app.models.outro_video import OutroVideo  # noqa
 

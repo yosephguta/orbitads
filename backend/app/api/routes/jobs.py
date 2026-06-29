@@ -30,6 +30,7 @@ from app.services.s3 import (
     get_audio_duration,
 )
 from app.services.audio_utils import get_audio_level, calculate_volume_multiplier
+from app.services.analytics import track_generation
 
 router = APIRouter(
     prefix="/jobs",
@@ -134,6 +135,16 @@ async def _run_pipeline(job_id: int, user_id: int):
                 error_message=f"Script generation failed: {e}",
                 completed_at=datetime.now(timezone.utc),
             )
+            try:
+                await track_generation(
+                    session=session, user=user, job_id=job.id,
+                    vehicle_data=vd, video_format=job.video_type or 'slideshow',
+                    theme=job.theme or 'family', voice_id=user.elevenlabs_voice_id,
+                    custom_script=bool(job.custom_script), photos_count=0,
+                    render_seconds=0, succeeded=False, failure_reason=str(e),
+                )
+            except Exception:
+                pass
             return
 
         # ── Stage 3: Voice TTS ────────────────────────────────
@@ -173,6 +184,16 @@ async def _run_pipeline(job_id: int, user_id: int):
                     error_message=f"Voice TTS failed: {e}",
                     completed_at=datetime.now(timezone.utc),
                 )
+                try:
+                    await track_generation(
+                        session=session, user=user, job_id=job.id,
+                        vehicle_data=vd, video_format=job.video_type or 'slideshow',
+                        theme=job.theme or 'family', voice_id=user.elevenlabs_voice_id,
+                        custom_script=bool(job.custom_script), photos_count=0,
+                        render_seconds=0, succeeded=False, failure_reason=str(e),
+                    )
+                except Exception:
+                    pass
                 return
 
         # ── Stage 4: Video assembly ───────────────────────────
@@ -267,7 +288,40 @@ async def _run_pipeline(job_id: int, user_id: int):
                     error_message=f"Video assembly failed: {e}",
                     completed_at=datetime.now(timezone.utc),
                 )
+                try:
+                    video_dict = json.loads(job.vehicle_data) if job.vehicle_data else {}
+                    await track_generation(
+                        session=session, user=user, job_id=job.id,
+                        vehicle_data=video_dict, video_format=job.video_type or 'slideshow',
+                        theme=job.theme or 'family', voice_id=user.elevenlabs_voice_id,
+                        custom_script=bool(job.custom_script), photos_count=0,
+                        render_seconds=0, succeeded=False, failure_reason=str(e),
+                    )
+                except Exception:
+                    pass
                 return
+
+        # ── Track analytics ───────────────────────────────────────
+        try:
+            pipeline_start = job.created_at
+            now            = datetime.now(timezone.utc)
+            render_secs    = int((now - pipeline_start.replace(tzinfo=timezone.utc)).total_seconds())
+            vehicle_dict   = json.loads(job.vehicle_data) if job.vehicle_data else {}
+            await track_generation(
+                session        = session,
+                user           = user,
+                job_id         = job.id,
+                vehicle_data   = vehicle_dict,
+                video_format   = job.video_type or 'slideshow',
+                theme          = job.theme or 'family',
+                voice_id       = user.elevenlabs_voice_id,
+                custom_script  = bool(job.custom_script),
+                photos_count   = len(json.loads(job.car_photo_urls)) if job.car_photo_urls else 0,
+                render_seconds = render_secs,
+                succeeded      = True,
+            )
+        except Exception as e:
+            print(f'Analytics tracking failed (non-fatal): {e}')
 
         # ── Done ─────────────────────────────────────────────
         await _update_job(session, job,
