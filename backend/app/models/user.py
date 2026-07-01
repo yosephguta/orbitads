@@ -16,6 +16,9 @@ class UserBase(SQLModel):
     phone_number: Optional[str] = Field(default=None, max_length=20)
     outro_volume: float = Field(default=2.0)
     custom_tagline: Optional[str] = Field(default=None, max_length=200)
+    preferred_language: str = Field(default='en', max_length=10)
+    elevenlabs_voice_id_es: Optional[str] = Field(default='zDMHo7CPscBTgfDtPOWl', max_length=100)
+    custom_tagline_es: Optional[str] = Field(default=None, max_length=200)
 
     # ── Multi-user / billing fields ───────────────────────────
     dealership_id: Optional[int] = Field(default=None, foreign_key='dealerships.id')
