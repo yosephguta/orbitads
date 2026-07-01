@@ -414,26 +414,40 @@ async def _run_pipeline(job_id: int, user_id: int):
     )
 
 
+@webhook_router.get("/webhook/shotstack")
+async def shotstack_webhook_verify():
+    """Shotstack sends a GET to validate the endpoint before POSTing events."""
+    return {"ok": True}
+
+
 @webhook_router.post("/webhook/shotstack")
-async def shotstack_webhook(request: Request):
+async def shotstack_webhook(request: Request, background_tasks: BackgroundTasks):
     """
-    Shotstack calls this URL when a render completes or fails.
-    Eliminates polling delay — job is marked complete the instant Shotstack finishes.
+    Shotstack POSTs here when a render completes or fails.
+    Returns 200 immediately (Shotstack retries if we take >10s) then
+    processes the download/upload in a background task.
     """
     try:
         payload = await request.json()
     except Exception:
-        raise HTTPException(status_code=400, detail="Invalid JSON")
-
-    print(f"Shotstack webhook received: {payload}")
-
-    event_type = payload.get("type", "")
-    render_id  = payload.get("id") or payload.get("data", {}).get("id")
-
-    if not render_id:
         return {"received": True}
 
-    # Find the job that submitted this render
+    print(f"Shotstack webhook received: {payload}")
+    background_tasks.add_task(_process_shotstack_webhook, payload)
+    return {"received": True}
+
+
+async def _process_shotstack_webhook(payload: dict):
+    # Payload shape (flat): id, status, url, error, type, action, owner, completed
+    render_id = payload.get("id")
+    status    = payload.get("status")
+    video_url = payload.get("url")
+    error     = payload.get("error")
+
+    if not render_id:
+        print("Shotstack webhook: no render_id in payload")
+        return
+
     from app.core.database import AsyncSessionLocal
     async with AsyncSessionLocal() as session:
         result = await session.exec(
@@ -443,52 +457,48 @@ async def shotstack_webhook(request: Request):
 
     if not job:
         print(f"Shotstack webhook: no job found for render_id {render_id}")
-        return {"received": True}
+        return
 
-    is_done    = "done"   in event_type or payload.get("data", {}).get("status") == "done"
-    is_failed  = "failed" in event_type or payload.get("data", {}).get("status") == "failed"
+    if status == "done":
+        if not video_url:
+            print(f"Shotstack webhook: done but no url for render {render_id}")
+            return
+        try:
+            final_bytes   = await download_render(video_url)
+            final_key     = make_final_video_key(job.id)
+            upload_bytes(final_bytes, final_key, "video/mp4")
+            presigned_url = create_presigned_download_url(final_key, expires_in=604800)
 
-    if is_done:
-        video_url = payload.get("data", {}).get("url")
-        if video_url:
             try:
-                final_bytes   = await download_render(video_url)
-                final_key     = make_final_video_key(job.id)
-                upload_bytes(final_bytes, final_key, "video/mp4")
-                presigned_url = create_presigned_download_url(final_key, expires_in=604800)
+                await delete_render(render_id)
+                print(f"Deleted render {render_id} from Shotstack")
+            except Exception:
+                pass
 
-                try:
-                    await delete_render(render_id)
-                    print(f"Deleted render {render_id} from Shotstack")
-                except Exception:
-                    pass
+            await _update_job_safe(job.id,
+                status             = JobStatus.COMPLETED,
+                final_video_s3_key = final_key,
+                final_video_url    = presigned_url,
+                progress_pct       = 100,
+                completed_at       = datetime.utcnow(),
+            )
+            print(f"Job {job.id} completed via webhook")
 
-                await _update_job_safe(job.id,
-                    status             = JobStatus.COMPLETED,
-                    final_video_s3_key = final_key,
-                    final_video_url    = presigned_url,
-                    progress_pct       = 100,
-                    completed_at       = datetime.utcnow(),
-                )
-                print(f"Job {job.id} completed via webhook")
+        except Exception as e:
+            print(f"Shotstack webhook: post-render processing failed: {e}")
+            await _update_job_safe(job.id,
+                status        = JobStatus.FAILED,
+                error_message = f"Post-render processing failed: {e}",
+                completed_at  = datetime.utcnow(),
+            )
 
-            except Exception as e:
-                await _update_job_safe(job.id,
-                    status        = JobStatus.FAILED,
-                    error_message = f"Post-render processing failed: {e}",
-                    completed_at  = datetime.utcnow(),
-                )
-
-    elif is_failed:
-        error = payload.get("data", {}).get("error", "Shotstack render failed")
+    elif status == "failed":
+        print(f"Job {job.id} failed via webhook: {error}")
         await _update_job_safe(job.id,
             status        = JobStatus.FAILED,
-            error_message = f"Video assembly failed: {error}",
+            error_message = f"Video assembly failed: {error or 'Shotstack render failed'}",
             completed_at  = datetime.utcnow(),
         )
-        print(f"Job {job.id} failed via webhook: {error}")
-
-    return {"received": True}
 
 
 def _build_highlights(vd: dict, dealership_name: str) -> list[str]:
