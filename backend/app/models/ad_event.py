@@ -50,7 +50,7 @@ class AdEvent(SQLModel, table=True):
 
     # Timing
     created_at:  datetime = Field(
-        default_factory=lambda: datetime.now(timezone.utc),
+        default_factory=datetime.utcnow,
         index=True,
     )
     day_of_week: Optional[int] = Field(default=None)  # 0=Monday, 6=Sunday

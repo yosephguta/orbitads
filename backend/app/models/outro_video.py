@@ -15,7 +15,7 @@ class OutroVideo(SQLModel, table=True):
     s3_key: str = Field(max_length=512)
     duration_seconds: Optional[float] = Field(default=None)
     created_at: datetime = Field(
-        default_factory=lambda: datetime.now(timezone.utc)
+        default_factory=datetime.utcnow
     )
 
 

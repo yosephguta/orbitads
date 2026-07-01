@@ -56,8 +56,8 @@ class Job(SQLModel, table=True):
     progress_pct: int = Field(default=0)
 
     # ── Timestamps ────────────────────────────────────────────
-    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
-    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
     completed_at: Optional[datetime] = Field(default=None)
 
 

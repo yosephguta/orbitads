@@ -51,10 +51,10 @@ class Listing(SQLModel, table=True):
 
     # Timestamps
     created_at:       datetime = Field(
-        default_factory=lambda: datetime.now(timezone.utc)
+        default_factory=datetime.utcnow
     )
     updated_at:       datetime = Field(
-        default_factory=lambda: datetime.now(timezone.utc)
+        default_factory=datetime.utcnow
     )
 
 

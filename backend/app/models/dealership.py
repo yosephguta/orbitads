@@ -16,5 +16,5 @@ class Dealership(SQLModel, table=True):
     required_tagline: Optional[str] = Field(default=None, max_length=200)
     required_tagline_es: Optional[str] = Field(default=None, max_length=200)
     created_at:       datetime      = Field(
-        default_factory=lambda: datetime.now(timezone.utc)
+        default_factory=datetime.utcnow
     )
