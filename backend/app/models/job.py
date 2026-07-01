@@ -3,7 +3,7 @@ from datetime import datetime, timezone
 from enum import Enum
 from typing import Optional
 
-from sqlalchemy import Column, Text
+from sqlalchemy import Column, String, Text
 from sqlmodel import Field, SQLModel
 
 
@@ -51,7 +51,7 @@ class Job(SQLModel, table=True):
     shotstack_render_id: Optional[str] = Field(default=None, max_length=100)
 
     # ── Status ────────────────────────────────────────────────
-    status: JobStatus = Field(default=JobStatus.PENDING)
+    status: JobStatus = Field(default=JobStatus.PENDING, sa_column=Column(String(50)))
     error_message: Optional[str] = Field(default=None, sa_column=Column(Text))
     progress_pct: int = Field(default=0)
 
