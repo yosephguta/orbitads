@@ -55,6 +55,7 @@ async def generate_ad_script(
     phone_number: Optional[str] = None,
     include_cta: bool = True,
     price: Optional[str] = None,
+    language: str = 'en',
 ) -> dict:
     """
     Generate a 30-second ad script for a vehicle using Claude.
@@ -114,6 +115,22 @@ and always end with a clear call to action."""
 
     price_line = f"PRICE: {price}" if price else ""
 
+    if language == 'es':
+        language_instruction = (
+            "IMPORTANT: Write the ENTIRE script in Spanish. "
+            "Natural, conversational Latin American Spanish. "
+            "Write ALL numbers in Spanish words as they would be spoken aloud — "
+            "the script goes directly to a voiceover and digits are read in English by the TTS engine. "
+            "Examples: "
+            "'dos mil veintitrés' not '2023', "
+            "'treinta mil ochocientos dólares' not '$30,800', "
+            "'cincuenta y dos mil millas' not '52,000 miles', "
+            "'dos punto cero litros' not '2.0L'. "
+            "The only English allowed is the brand name (Kia, Acura, Honda, etc.)."
+        )
+    else:
+        language_instruction = ""
+
     user_prompt = f"""Write a 30-second video ad script for a car salesperson posting on social media.
 
 VEHICLE: {v_summary}
@@ -130,6 +147,8 @@ RULES:
 - NEVER mention the dealership name
 - NEVER say "come visit us", "stop by", "our dealership", or "our lot"
 {cta_rules}
+
+{language_instruction}
 
 Return ONLY a JSON object with these exact keys. No markdown, no explanation, just the JSON:
 {{

@@ -65,6 +65,9 @@ class UserRead(SQLModel):
     phone_number: Optional[str]
     trial_ends_at: Optional[datetime]
     custom_tagline: Optional[str]
+    preferred_language: str
+    elevenlabs_voice_id_es: Optional[str]
+    custom_tagline_es: Optional[str]
     created_at: datetime
 
 
@@ -75,3 +78,6 @@ class UserUpdate(SQLModel):
     elevenlabs_voice_id: Optional[str] = None
     phone_number: Optional[str] = None
     custom_tagline: Optional[str] = None
+    preferred_language: Optional[str] = None
+    elevenlabs_voice_id_es: Optional[str] = None
+    custom_tagline_es: Optional[str] = None

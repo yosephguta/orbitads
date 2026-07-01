@@ -6,12 +6,18 @@ from app.models.ad_event import AdEvent
 from app.models.user import User
 
 PRELOADED_VOICE_IDS = {
+    # English
     'Gubgw9l4dtIoQA9YZHgx', '3WqHLnw80rOZqJzW9YRB',
     'GZ4PpFJV8ikEGUtBrjK7', 'llNlEi50DSCIEuoOIaH7',
     'zDBYcuJrpuZ6YQ7AgRUw', 'C1npRmjB19a6yNkEucvx',
     'cPoqAvGWCPfCfyPMwe4z', 's3TPKV1kjDlVtZbl4Ksh',
     'tnSpp4vdxKPjI9w0GnoV', 'UgBBYS2sOqTuMpoF3BR0',
     'IjnA9kwZJHJ20Fp7Vmy6',
+    # Spanish
+    'zDMHo7CPscBTgfDtPOWl', 'G4IAP30yc6c1gK0csDfu',
+    'k8cFOyAg7B9qwBlDDNTC', '9F4C8ztpNUmXkdDDbz3J',
+    '8mBRP99B2Ng2QwsJMFQl', '22VndfJPBU7AZORAZZTT',
+    'iqH5zmD4xxyGBHUsZ4Gt',
 }
 
 
@@ -59,6 +65,7 @@ async def track_generation(
     render_seconds: int,
     succeeded:      bool,
     failure_reason: Optional[str] = None,
+    language:       str = 'en',
 ) -> None:
     now = datetime.now(timezone.utc)
 
@@ -73,6 +80,7 @@ async def track_generation(
         vehicle_price         = vehicle_data.get('price'),
         vehicle_price_range   = _price_range(vehicle_data.get('price')),
         vehicle_mileage_range = _mileage_range(vehicle_data.get('mileage')),
+        language              = language,
         video_format          = video_format,
         theme_used            = theme,
         voice_id_used         = voice_id,

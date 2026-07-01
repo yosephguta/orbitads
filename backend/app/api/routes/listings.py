@@ -26,6 +26,7 @@ from app.core.database import get_session
 from app.core.security import get_current_user
 from app.models.user import User
 from app.models.listing import Listing, ListingRead
+from app.models.dealership import Dealership
 from app.services.analytics import track_posting
 from app.services.tagline import get_effective_tagline
 
@@ -49,6 +50,7 @@ class GenerateRequest(BaseModel):
     dealership_name: Optional[str] = None
     listing_url:     Optional[str] = None
     theme:           Optional[str] = 'value'
+    language:        Optional[str] = 'en'
 
 
 class GenerateResponse(BaseModel):
@@ -130,17 +132,36 @@ async def generate_listing(
         lower = text.lower()
         return any(phrase in lower for phrase in _OWNERSHIP_PHRASES)
 
-    if current_user.phone_number:
-        cta_instruction = (
-            f"End with: 'DM me or call/text {current_user.phone_number} — "
-            f"I\\'d love to help you find your next car!'"
+    if payload.language == 'es':
+        if current_user.phone_number:
+            cta_instruction = (
+                f"Termina con: 'Escríbeme o llámame/mándame un mensaje al {current_user.phone_number} — "
+                f"¡me encantaría ayudarte a encontrar tu próximo carro!'"
+            )
+        else:
+            cta_instruction = "Termina con: '¡Escríbeme para más información o para agendar una prueba de manejo!'"
+    else:
+        if current_user.phone_number:
+            cta_instruction = (
+                f"End with: 'DM me or call/text {current_user.phone_number} — "
+                f"I\\'d love to help you find your next car!'"
+            )
+        else:
+            cta_instruction = "End with: 'DM me for more info or to schedule a test drive!'"
+
+    if payload.language == 'es':
+        language_rule = (
+            "IMPORTANTE: Escribe TODA la descripción en español. "
+            "Español latinoamericano natural y conversacional. "
+            "Solo el nombre del vehículo (año/marca/modelo) puede estar en inglés."
         )
     else:
-        cta_instruction = "End with: 'DM me for more info or to schedule a test drive!'"
+        language_rule = ""
 
     def _build_prompt(retry_note: str = "") -> str:
         return f"""Write a social media vehicle post for a car salesperson showcasing a vehicle.
 {retry_note}
+{language_rule}
 Vehicle: {vehicle_info}
 Price: {price_clean}
 Mileage: {mileage_str}
@@ -190,7 +211,14 @@ Respond with ONLY valid JSON: {{"title": "...", "description": "...", "tags": [.
         )
 
     description = data.get("description", "")
-    tagline = await get_effective_tagline(session, current_user)
+    if payload.language == 'es':
+        tagline = None
+        if current_user.dealership_id:
+            dealership = await session.get(Dealership, current_user.dealership_id)
+            tagline = dealership.required_tagline_es if dealership else None
+        tagline = tagline or current_user.custom_tagline_es or None
+    else:
+        tagline = await get_effective_tagline(session, current_user)
     if tagline:
         description = description.rstrip() + f"\n\n{tagline}"
 
@@ -360,13 +388,14 @@ async def track_posting_event(
         return {'success': False}
 
 class FbPostCaptionRequest(BaseModel):
-    year:    Optional[str] = None
-    make:    Optional[str] = None
-    model:   Optional[str] = None
-    trim:    Optional[str] = None
-    price:   Optional[str] = None
-    mileage: Optional[str] = None
-    theme:   str = "hype"
+    year:     Optional[str] = None
+    make:     Optional[str] = None
+    model:    Optional[str] = None
+    trim:     Optional[str] = None
+    price:    Optional[str] = None
+    mileage:  Optional[str] = None
+    theme:    str = "hype"
+    language: Optional[str] = 'en'
 
 
 class FbPostCaptionResponse(BaseModel):
@@ -399,13 +428,25 @@ async def generate_fb_post_caption(
     mileage_str  = payload.mileage or "N/A"
     tone         = _THEME_TONES.get(payload.theme, _THEME_TONES["hype"])
 
-    if current_user.phone_number:
-        cta = f"DM me or call/text {current_user.phone_number} to schedule a test drive!"
+    if payload.language == 'es':
+        if current_user.phone_number:
+            cta = f"Escríbeme o llámame al {current_user.phone_number} para agendar una prueba de manejo."
+        else:
+            cta = "¡Escríbeme para más información o para agendar una prueba de manejo!"
     else:
-        cta = "DM me for more info or to schedule a test drive!"
+        if current_user.phone_number:
+            cta = f"DM me or call/text {current_user.phone_number} to schedule a test drive!"
+        else:
+            cta = "DM me for more info or to schedule a test drive!"
+
+    fb_language_rule = (
+        "IMPORTANTE: Escribe TODA la publicación en español. "
+        "Español latinoamericano natural y conversacional. "
+        "Solo el nombre del vehículo puede estar en inglés.\n"
+    ) if payload.language == 'es' else ""
 
     prompt = f"""Write a short Facebook post caption for a car salesperson posting a vehicle.
-
+{fb_language_rule}
 Vehicle: {vehicle_info}
 Price: {price_clean}
 Mileage: {mileage_str}
@@ -448,9 +489,39 @@ Return ONLY the caption. No labels. Preserve all line breaks exactly as written.
     return FbPostCaptionResponse(caption=msg.content[0].text.strip())
 
 
+class TranslateRequest(BaseModel):
+    text:            str
+    target_language: str = 'es'
+
+
+@router.post('/translate-tagline')
+async def translate_tagline(
+    payload:      TranslateRequest,
+    current_user: Annotated[User, Depends(get_current_user)],
+):
+    if not payload.text.strip():
+        return {'translated': ''}
+
+    target = 'Spanish' if payload.target_language == 'es' else 'English'
+    message = await _client.messages.create(
+        model='claude-sonnet-4-6',
+        max_tokens=100,
+        messages=[{
+            'role': 'user',
+            'content': (
+                f'Translate this short text to {target}.\n'
+                f'Return ONLY the translated text, nothing else, no quotes, no explanation.\n\n'
+                f'Text: {payload.text}'
+            ),
+        }],
+    )
+    return {'translated': message.content[0].text.strip()}
+
+
 class ScriptRequest(BaseModel):
     vehicle_info:  str
     custom_prompt: str
+    language:      Optional[str] = 'en'
 
 @router.post("/generate-script")
 async def generate_custom_script(
@@ -462,13 +533,24 @@ async def generate_custom_script(
     else:
         script_cta = 'End with: "Send me a message today!" or similar personal CTA'
 
+    script_language_rule = (
+        "IMPORTANT: Write the ENTIRE script in Spanish. "
+        "Natural, conversational Latin American Spanish. "
+        "Write ALL numbers in Spanish words as they would be spoken aloud — "
+        "the script goes directly to a voiceover and digits are read in English by the TTS engine. "
+        "Examples: 'dos mil veintitrés' not '2023', "
+        "'treinta mil ochocientos dólares' not '$30,800', "
+        "'cincuenta y dos mil millas' not '52,000 miles'. "
+        "The only English allowed is the brand name (Kia, Acura, Honda, etc.).\n"
+    ) if payload.language == 'es' else ""
+
     message = await _client.messages.create(
         model="claude-sonnet-4-6",
         max_tokens=500,
         messages=[{
             "role": "user",
             "content": f"""Write a 30-second video ad script for a car salesperson's social media video.
-
+{script_language_rule}
 Vehicle: {payload.vehicle_info}
 
 Their style/prompt: {payload.custom_prompt}

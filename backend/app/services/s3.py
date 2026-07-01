@@ -166,6 +166,16 @@ def download_bytes(s3_key: str) -> bytes:
         raise RuntimeError(f"Could not download from S3: {e}") from e
 
 
+# ── Existence check ───────────────────────────────────────────
+def key_exists(s3_key: str) -> bool:
+    """Return True if the S3 object exists, False otherwise."""
+    try:
+        _s3.head_object(Bucket=BUCKET, Key=s3_key)
+        return True
+    except ClientError:
+        return False
+
+
 # ── Delete ─────────────────────────────────────────────────────
 def delete_object(s3_key: str) -> None:
     """Delete a single file. Used for cleanup after jobs complete."""

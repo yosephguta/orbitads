@@ -39,6 +39,7 @@ class Job(SQLModel, table=True):
     voice_s3_key: Optional[str] = Field(default=None, max_length=512)
     car_photo_urls: Optional[str] = Field(default=None, sa_column=Column(Text))
     price: Optional[str] = Field(default=None, max_length=50)
+    language: Optional[str] = Field(default='en', max_length=10)
 
     # ── Pipeline outputs ──────────────────────────────────────
     vehicle_data: Optional[str] = Field(default=None, sa_column=Column(Text))
@@ -68,6 +69,7 @@ class JobCreate(SQLModel):
     outro_video_id: Optional[int] = None
     custom_script: Optional[str] = None
     price: Optional[str] = None
+    language: Optional[str] = 'en'
 
 
 class JobRead(SQLModel):
@@ -82,6 +84,7 @@ class JobRead(SQLModel):
     generated_script: Optional[str]
     final_video_url: Optional[str]
     error_message: Optional[str]
+    language: Optional[str]
     created_at: datetime
     updated_at: datetime
     completed_at: Optional[datetime]

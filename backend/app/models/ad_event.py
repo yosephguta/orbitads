@@ -32,6 +32,7 @@ class AdEvent(SQLModel, table=True):
     # low(<30k) | mid(30-80k) | high(80k+)
 
     # Generation details (populated for 'generated' and 'generation_failed')
+    language:              Optional[str]  = Field(default='en', max_length=10)
     video_format:          Optional[str]  = Field(default=None, max_length=20)
     # 'listing' | 'slideshow' | 'with_outro'
     theme_used:            Optional[str]  = Field(default=None, max_length=50)

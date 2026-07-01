@@ -39,6 +39,7 @@ router = APIRouter(
 )
 
 BRIAN_VOICE_ID = "Gubgw9l4dtIoQA9YZHgx"
+CLAUS_VOICE_ID = "zDMHo7CPscBTgfDtPOWl"
 
 DEFAULT_CAR_PHOTOS = [
     "https://platform.cstatic-images.com/xxlarge/in/v2/ff3aaaec-e513-4b42-8f96-8ed9d9280fd1/0b4af000-a573-4afc-b04d-9c9639bdbf02/ZfmeNMBUffUiOHI44HeeZ-2eR0U.jpg",
@@ -79,9 +80,7 @@ async def _run_pipeline(job_id: int, user_id: int):
         if not job or not user:
             return
 
-        effective_voice_id = user.elevenlabs_voice_id or BRIAN_VOICE_ID
-
-        print(f"Pipeline start — job_id={job_id}, vin={job.vin!r}, theme={job.theme!r}, video_type={job.video_type!r}")
+        print(f"Pipeline start — job_id={job_id}, vin={job.vin!r}, theme={job.theme!r}, video_type={job.video_type!r}, language={job.language!r}")
 
         # ── Stage 1: VIN decode ───────────────────────────────
         await _update_job(session, job, status=JobStatus.VIN_DECODING, progress_pct=10)
@@ -131,6 +130,7 @@ async def _run_pipeline(job_id: int, user_id: int):
                     phone_number=user.phone_number or None,
                     include_cta=(job.video_type != "with_outro"),
                     price=job.price or None,
+                    language=job.language or 'en',
                 )
             await _update_job(session, job, generated_script=json.dumps(script), progress_pct=50)
         except Exception as e:
@@ -143,15 +143,21 @@ async def _run_pipeline(job_id: int, user_id: int):
                 await track_generation(
                     session=session, user=user, job_id=job.id,
                     vehicle_data=vd, video_format=job.video_type or 'slideshow',
-                    theme=job.theme or 'family', voice_id=effective_voice_id,
+                    theme=job.theme or 'family', voice_id=user.elevenlabs_voice_id or BRIAN_VOICE_ID,
                     custom_script=bool(job.custom_script), photos_count=0,
                     render_seconds=0, succeeded=False, failure_reason=str(e),
+                    language=job.language or 'en',
                 )
             except Exception:
                 pass
             return
 
         # ── Stage 3: Voice TTS ────────────────────────────────
+        if job.language == 'es':
+            effective_voice_id = user.elevenlabs_voice_id_es or CLAUS_VOICE_ID
+        else:
+            effective_voice_id = user.elevenlabs_voice_id or BRIAN_VOICE_ID
+
         audio_s3_key = None
         await _update_job(session, job, status=JobStatus.VOICE_CLONING, progress_pct=55)
         try:
@@ -194,6 +200,7 @@ async def _run_pipeline(job_id: int, user_id: int):
                     theme=job.theme or 'family', voice_id=effective_voice_id,
                     custom_script=bool(job.custom_script), photos_count=0,
                     render_seconds=0, succeeded=False, failure_reason=str(e),
+                    language=job.language or 'en',
                 )
             except Exception:
                 pass
@@ -270,6 +277,7 @@ async def _run_pipeline(job_id: int, user_id: int):
                     outro_video_url=outro_url,
                     outro_duration=outro_duration,
                     slideshow_volume=slideshow_volume,
+                    language=job.language or 'en',
                 )
 
                 render_id = await submit_render(timeline)
@@ -296,9 +304,10 @@ async def _run_pipeline(job_id: int, user_id: int):
                     await track_generation(
                         session=session, user=user, job_id=job.id,
                         vehicle_data=video_dict, video_format=job.video_type or 'slideshow',
-                        theme=job.theme or 'family', voice_id=user.elevenlabs_voice_id,
+                        theme=job.theme or 'family', voice_id=effective_voice_id,
                         custom_script=bool(job.custom_script), photos_count=0,
                         render_seconds=0, succeeded=False, failure_reason=str(e),
+                        language=job.language or 'en',
                     )
                 except Exception:
                     pass
@@ -322,6 +331,7 @@ async def _run_pipeline(job_id: int, user_id: int):
                 photos_count   = len(json.loads(job.car_photo_urls)) if job.car_photo_urls else 0,
                 render_seconds = render_secs,
                 succeeded      = True,
+                language       = job.language or 'en',
             )
         except Exception as e:
             print(f'Analytics tracking failed (non-fatal): {e}')
@@ -396,6 +406,7 @@ async def create_job(
         photos_s3_keys=payload.photos_s3_keys,
         voice_s3_key=payload.voice_s3_key,
         car_photo_urls=payload.car_photo_urls,
+        language=payload.language or 'en',
         status=JobStatus.PENDING,
         progress_pct=0,
     )

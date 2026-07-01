@@ -20,9 +20,21 @@ from app.core.security import (
 )
 from app.models.user import User, UserCreate, UserRead, UserUpdate
 from app.models.dealership import Dealership
+from app.services.s3 import upload_bytes, create_presigned_download_url, key_exists
 from app.services.email import send_verification_email, send_welcome_email
 
 router = APIRouter(prefix="/auth", tags=["auth"])
+
+# Spanish voices not in users' ElevenLabs library by default.
+# Preview clips are generated once via TTS and cached in S3.
+_SPANISH_VOICE_IDS = {
+    'zDMHo7CPscBTgfDtPOWl', 'G4IAP30yc6c1gK0csDfu',
+    'k8cFOyAg7B9qwBlDDNTC', '9F4C8ztpNUmXkdDDbz3J',
+    '8mBRP99B2Ng2QwsJMFQl', '22VndfJPBU7AZORAZZTT',
+    'iqH5zmD4xxyGBHUsZ4Gt',
+}
+_PREVIEW_TEXT = '¡Hola! Estoy aquí para ayudarte a encontrar tu próximo vehículo.'
+_voice_preview_cache: dict[str, str] = {}  # voice_id → presigned S3 URL
 
 
 # ── Register ──────────────────────────────────────────────────
@@ -126,10 +138,12 @@ async def me(
     session: Annotated[SQLModelAsyncSession, Depends(get_session)],
 ):
     dealership_required_tagline = None
+    dealership_required_tagline_es = None
     if current_user.dealership_id:
         dealership = await session.get(Dealership, current_user.dealership_id)
         if dealership:
             dealership_required_tagline = dealership.required_tagline
+            dealership_required_tagline_es = dealership.required_tagline_es
 
     settings = get_settings()
     now = datetime.now(timezone.utc)
@@ -166,6 +180,7 @@ async def me(
     return {
         **UserRead.model_validate(current_user).model_dump(),
         "dealership_required_tagline": dealership_required_tagline,
+        "dealership_required_tagline_es": dealership_required_tagline_es,
         "subscription_message": subscription_message,
         "is_blocked": is_blocked,
     }
@@ -179,6 +194,7 @@ async def get_preloaded_voices(
     import httpx
 
     PRELOADED_VOICE_IDS = {
+        # English
         'Gubgw9l4dtIoQA9YZHgx',  # Brian
         'onwK4e9ZLuTAKqWW03F9',  # Daniel
         'FGY2WhTYpPnrIDTdsKH5',  # Laura
@@ -191,6 +207,14 @@ async def get_preloaded_voices(
         'bIHbv24MWmeRgasZH58o',  # Will
         'pqHfZKP75CvOlQylNhV4',  # Bill
         'iP95p4xoKVk53GoZ742B',  # Chris
+        # Spanish
+        'zDMHo7CPscBTgfDtPOWl',  # Claus
+        'G4IAP30yc6c1gK0csDfu',  # Juan
+        'k8cFOyAg7B9qwBlDDNTC',  # Miguel
+        '9F4C8ztpNUmXkdDDbz3J',  # Dan
+        '8mBRP99B2Ng2QwsJMFQl',  # El Faraon
+        '22VndfJPBU7AZORAZZTT',  # Valeria
+        'iqH5zmD4xxyGBHUsZ4Gt',  # Lis
     }
 
     settings = get_settings()
@@ -209,6 +233,49 @@ async def get_preloaded_voices(
                 for v in all_voices
                 if v['voice_id'] in PRELOADED_VOICE_IDS and v.get('preview_url')
             }
+
+            # For Spanish voices not in the user's library, generate a TTS preview
+            # clip once and cache it in S3 so every user gets previews on first load.
+            missing_spanish = _SPANISH_VOICE_IDS - set(preview_map.keys())
+            for voice_id in missing_spanish:
+                # 1. In-memory cache (avoids presigned URL regeneration each request)
+                if voice_id in _voice_preview_cache:
+                    preview_map[voice_id] = _voice_preview_cache[voice_id]
+                    continue
+
+                s3_key = f'voice_previews/{voice_id}.mp3'
+
+                # 2. Already generated and in S3
+                if key_exists(s3_key):
+                    url = create_presigned_download_url(s3_key, expires_in=604800)
+                    _voice_preview_cache[voice_id] = url
+                    preview_map[voice_id] = url
+                    continue
+
+                # 3. Generate TTS preview and upload to S3 (runs once per voice ever)
+                try:
+                    tts = await client.post(
+                        f'https://api.elevenlabs.io/v1/text-to-speech/{voice_id}',
+                        headers={
+                            'xi-api-key':   settings.elevenlabs_api_key,
+                            'Content-Type': 'application/json',
+                        },
+                        json={
+                            'text':           _PREVIEW_TEXT,
+                            'model_id':       'eleven_turbo_v2',
+                            'voice_settings': {'stability': 0.5, 'similarity_boost': 0.75},
+                        },
+                        timeout=30.0,
+                    )
+                    if tts.is_success:
+                        upload_bytes(tts.content, s3_key, 'audio/mpeg')
+                        url = create_presigned_download_url(s3_key, expires_in=604800)
+                        _voice_preview_cache[voice_id] = url
+                        preview_map[voice_id] = url
+                        print(f'Generated voice preview for {voice_id}')
+                except Exception as e:
+                    print(f'Voice preview generation failed for {voice_id}: {e}')
+
             return {'preview_urls': preview_map}
     except Exception as e:
         print(f'Could not fetch ElevenLabs preview URLs: {e}')
@@ -221,23 +288,33 @@ async def update_me(
     current_user: Annotated[User, Depends(get_current_user)],
     session: Annotated[SQLModelAsyncSession, Depends(get_session)],
 ):
-    for key, value in payload.model_dump(exclude_unset=True).items():
+    updates = payload.model_dump(exclude_unset=True)
+    for key, value in updates.items():
         setattr(current_user, key, value)
     # Normalize empty string → None for optional text fields
-    if payload.model_dump(exclude_unset=True).get("custom_tagline") == "":
+    if updates.get("custom_tagline") == "":
         current_user.custom_tagline = None
+    if updates.get("custom_tagline_es") == "":
+        current_user.custom_tagline_es = None
+    # Validate preferred_language
+    if "preferred_language" in updates:
+        if updates["preferred_language"] not in ("en", "es"):
+            current_user.preferred_language = "en"
     current_user.updated_at = datetime.now(timezone.utc)
     session.add(current_user)
     await session.commit()
     await session.refresh(current_user)
 
     dealership_required_tagline = None
+    dealership_required_tagline_es = None
     if current_user.dealership_id:
         dealership = await session.get(Dealership, current_user.dealership_id)
         if dealership:
             dealership_required_tagline = dealership.required_tagline
+            dealership_required_tagline_es = dealership.required_tagline_es
 
     return {
         **UserRead.model_validate(current_user).model_dump(),
         "dealership_required_tagline": dealership_required_tagline,
+        "dealership_required_tagline_es": dealership_required_tagline_es,
     }

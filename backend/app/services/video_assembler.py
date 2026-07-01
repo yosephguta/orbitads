@@ -78,6 +78,7 @@ def build_ad_timeline_photo_only(
     outro_video_url: Optional[str] = None,
     outro_duration: float = 8.0,
     slideshow_volume: float = 1.0,
+    language: str = 'en',
 ) -> dict:
     """
     Build a Shotstack timeline for a slideshow ad with optional outro clip.
@@ -136,10 +137,11 @@ def build_ad_timeline_photo_only(
     # ── CTA overlay — bottom-left, slideshow only ─────────────
     # Omitted when an outro clip is present — the outro IS the CTA.
     if not outro_video_url:
+        cta_text = '&#x1F4AC; Contáctame hoy' if language == 'es' else '&#x1F4AC; Message Me Today'
         clips.append({
             "asset": {
                 "type":   "html",
-                "html":   '<p style="font-family:Open Sans,sans-serif;font-size:24px;font-weight:700;color:#fff;background:rgba(0,0,0,0.8);padding:8px 16px;margin:0;white-space:nowrap">&#x1F4AC; Message Me Today</p>',
+                "html":   f'<p style="font-family:Open Sans,sans-serif;font-size:24px;font-weight:700;color:#fff;background:rgba(0,0,0,0.8);padding:8px 16px;margin:0;white-space:nowrap">{cta_text}</p>',
                 "width":  500,
                 "height": 60,
                 "css":    "",
