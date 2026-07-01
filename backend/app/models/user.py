@@ -15,6 +15,7 @@ class UserBase(SQLModel):
     elevenlabs_voice_id: Optional[str] = Field(default=None, max_length=255)
     phone_number: Optional[str] = Field(default=None, max_length=20)
     outro_volume: float = Field(default=2.0)
+    custom_tagline: Optional[str] = Field(default=None, max_length=200)
 
     # ── Multi-user / billing fields ───────────────────────────
     dealership_id: Optional[int] = Field(default=None, foreign_key='dealerships.id')
@@ -60,6 +61,7 @@ class UserRead(SQLModel):
     elevenlabs_voice_id: Optional[str]
     phone_number: Optional[str]
     trial_ends_at: Optional[datetime]
+    custom_tagline: Optional[str]
     created_at: datetime
 
 
@@ -69,3 +71,4 @@ class UserUpdate(SQLModel):
     dealership_name: Optional[str] = None
     elevenlabs_voice_id: Optional[str] = None
     phone_number: Optional[str] = None
+    custom_tagline: Optional[str] = None

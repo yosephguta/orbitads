@@ -27,6 +27,7 @@ from app.core.security import get_current_user
 from app.models.user import User
 from app.models.listing import Listing, ListingRead
 from app.services.analytics import track_posting
+from app.services.tagline import get_effective_tagline
 
 import anthropic
 from app.core.config import get_settings
@@ -89,6 +90,7 @@ class UpdateSoldStatusRequest(BaseModel):
 async def generate_listing(
     payload: GenerateRequest,
     current_user: Annotated[User, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_session)],
 ):
     """Generate a facebook marketplace listing using Claude."""
     vehicle_info = " ".join(filter(None, [
@@ -187,10 +189,15 @@ Respond with ONLY valid JSON: {{"title": "...", "description": "...", "tags": [.
             )
         )
 
+    description = data.get("description", "")
+    tagline = await get_effective_tagline(session, current_user)
+    if tagline:
+        description = description.rstrip() + f"\n\n{tagline}"
+
     return GenerateResponse(
         title=data.get("title", vehicle_info),
         price=price_clean,
-        description=data.get("description", ""),
+        description=description,
         tags=data.get("tags", []),
     )
 

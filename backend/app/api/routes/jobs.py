@@ -38,6 +38,8 @@ router = APIRouter(
     dependencies=[Depends(require_active_subscription)],
 )
 
+BRIAN_VOICE_ID = "Gubgw9l4dtIoQA9YZHgx"
+
 DEFAULT_CAR_PHOTOS = [
     "https://platform.cstatic-images.com/xxlarge/in/v2/ff3aaaec-e513-4b42-8f96-8ed9d9280fd1/0b4af000-a573-4afc-b04d-9c9639bdbf02/ZfmeNMBUffUiOHI44HeeZ-2eR0U.jpg",
     "https://platform.cstatic-images.com/xxlarge/in/v2/ff3aaaec-e513-4b42-8f96-8ed9d9280fd1/0b4af000-a573-4afc-b04d-9c9639bdbf02/MmGE9KYnZW-P85anPOVCpjgH2sM.jpg",
@@ -76,6 +78,8 @@ async def _run_pipeline(job_id: int, user_id: int):
 
         if not job or not user:
             return
+
+        effective_voice_id = user.elevenlabs_voice_id or BRIAN_VOICE_ID
 
         print(f"Pipeline start — job_id={job_id}, vin={job.vin!r}, theme={job.theme!r}, video_type={job.video_type!r}")
 
@@ -139,7 +143,7 @@ async def _run_pipeline(job_id: int, user_id: int):
                 await track_generation(
                     session=session, user=user, job_id=job.id,
                     vehicle_data=vd, video_format=job.video_type or 'slideshow',
-                    theme=job.theme or 'family', voice_id=user.elevenlabs_voice_id,
+                    theme=job.theme or 'family', voice_id=effective_voice_id,
                     custom_script=bool(job.custom_script), photos_count=0,
                     render_seconds=0, succeeded=False, failure_reason=str(e),
                 )
@@ -149,52 +153,51 @@ async def _run_pipeline(job_id: int, user_id: int):
 
         # ── Stage 3: Voice TTS ────────────────────────────────
         audio_s3_key = None
-        if user.elevenlabs_voice_id:
-            await _update_job(session, job, status=JobStatus.VOICE_CLONING, progress_pct=55)
+        await _update_job(session, job, status=JobStatus.VOICE_CLONING, progress_pct=55)
+        try:
+            audio_bytes = await text_to_speech(
+                text=script["full_script"],
+                voice_id=effective_voice_id,
+            )
+
+            # Normalize voiceover loudness to -22 dBFS (quieter for video)
             try:
-                audio_bytes = await text_to_speech(
-                    text=script["full_script"],
-                    voice_id=user.elevenlabs_voice_id,
+                from pydub import AudioSegment
+                from pydub.effects import normalize
+                import io as _io
+
+                seg = AudioSegment.from_mp3(_io.BytesIO(audio_bytes))
+                seg = normalize(seg)
+                target_dBFS = -22.0
+                seg = seg.apply_gain(target_dBFS - seg.dBFS)
+                buf = _io.BytesIO()
+                seg.export(buf, format="mp3", bitrate="192k")
+                audio_bytes = buf.getvalue()
+                print(f"Audio normalized to {target_dBFS} dBFS")
+            except Exception as norm_err:
+                print(f"Audio normalization failed (non-fatal): {norm_err}")
+
+            audio_key = make_audio_output_key(job.id)
+            upload_bytes(audio_bytes, audio_key, "audio/mpeg")
+            audio_s3_key = audio_key
+            await _update_job(session, job, progress_pct=70)
+        except Exception as e:
+            await _update_job(session, job,
+                status=JobStatus.FAILED,
+                error_message=f"Voice TTS failed: {e}",
+                completed_at=datetime.now(timezone.utc),
+            )
+            try:
+                await track_generation(
+                    session=session, user=user, job_id=job.id,
+                    vehicle_data=vd, video_format=job.video_type or 'slideshow',
+                    theme=job.theme or 'family', voice_id=effective_voice_id,
+                    custom_script=bool(job.custom_script), photos_count=0,
+                    render_seconds=0, succeeded=False, failure_reason=str(e),
                 )
-
-                # Normalize voiceover loudness to -22 dBFS (quieter for video)
-                try:
-                    from pydub import AudioSegment
-                    from pydub.effects import normalize
-                    import io as _io
-
-                    seg = AudioSegment.from_mp3(_io.BytesIO(audio_bytes))
-                    seg = normalize(seg)
-                    target_dBFS = -22.0
-                    seg = seg.apply_gain(target_dBFS - seg.dBFS)
-                    buf = _io.BytesIO()
-                    seg.export(buf, format="mp3", bitrate="192k")
-                    audio_bytes = buf.getvalue()
-                    print(f"Audio normalized to {target_dBFS} dBFS")
-                except Exception as norm_err:
-                    print(f"Audio normalization failed (non-fatal): {norm_err}")
-
-                audio_key = make_audio_output_key(job.id)
-                upload_bytes(audio_bytes, audio_key, "audio/mpeg")
-                audio_s3_key = audio_key
-                await _update_job(session, job, progress_pct=70)
-            except Exception as e:
-                await _update_job(session, job,
-                    status=JobStatus.FAILED,
-                    error_message=f"Voice TTS failed: {e}",
-                    completed_at=datetime.now(timezone.utc),
-                )
-                try:
-                    await track_generation(
-                        session=session, user=user, job_id=job.id,
-                        vehicle_data=vd, video_format=job.video_type or 'slideshow',
-                        theme=job.theme or 'family', voice_id=user.elevenlabs_voice_id,
-                        custom_script=bool(job.custom_script), photos_count=0,
-                        render_seconds=0, succeeded=False, failure_reason=str(e),
-                    )
-                except Exception:
-                    pass
-                return
+            except Exception:
+                pass
+            return
 
         # ── Stage 4: Video assembly ───────────────────────────
         print(f"Stage 4 — video_type: {job.video_type}, audio_s3_key: {audio_s3_key}")
@@ -314,7 +317,7 @@ async def _run_pipeline(job_id: int, user_id: int):
                 vehicle_data   = vehicle_dict,
                 video_format   = job.video_type or 'slideshow',
                 theme          = job.theme or 'family',
-                voice_id       = user.elevenlabs_voice_id,
+                voice_id       = effective_voice_id,
                 custom_script  = bool(job.custom_script),
                 photos_count   = len(json.loads(job.car_photo_urls)) if job.car_photo_urls else 0,
                 render_seconds = render_secs,

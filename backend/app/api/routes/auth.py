@@ -19,6 +19,7 @@ from app.core.security import (
     verify_password,
 )
 from app.models.user import User, UserCreate, UserRead, UserUpdate
+from app.models.dealership import Dealership
 from app.services.email import send_verification_email, send_welcome_email
 
 router = APIRouter(prefix="/auth", tags=["auth"])
@@ -48,6 +49,7 @@ async def register(
         trial_ends_at=datetime.now(timezone.utc) + timedelta(days=14),
         is_verified=False,
         verification_token=token,
+        elevenlabs_voice_id="Gubgw9l4dtIoQA9YZHgx",  # Brian — default voice
     )
 
     session.add(user)
@@ -118,11 +120,55 @@ async def login(
 
 
 # ── Me ────────────────────────────────────────────────────────
-@router.get("/me", response_model=UserRead)
+@router.get("/me")
 async def me(
     current_user: Annotated[User, Depends(get_current_user)],
+    session: Annotated[SQLModelAsyncSession, Depends(get_session)],
 ):
-    return current_user
+    dealership_required_tagline = None
+    if current_user.dealership_id:
+        dealership = await session.get(Dealership, current_user.dealership_id)
+        if dealership:
+            dealership_required_tagline = dealership.required_tagline
+
+    settings = get_settings()
+    now = datetime.now(timezone.utc)
+    subscription_message = None
+    is_blocked = False
+
+    if current_user.subscription_status == "trial":
+        if current_user.trial_ends_at is not None:
+            trial_end = current_user.trial_ends_at
+            if trial_end.tzinfo is None:
+                trial_end = trial_end.replace(tzinfo=timezone.utc)
+            # Dev bypass: never block the test account
+            is_dev = bool(settings.dev_test_email and current_user.email == settings.dev_test_email)
+            if not is_dev and now > trial_end:
+                subscription_message = "trial_expired"
+                is_blocked = True
+
+    elif current_user.subscription_status == "past_due":
+        updated = current_user.updated_at
+        if updated is not None:
+            if updated.tzinfo is None:
+                updated = updated.replace(tzinfo=timezone.utc)
+            grace_end = updated + timedelta(days=3)
+        else:
+            grace_end = now
+        if now > grace_end:
+            subscription_message = "past_due"
+            is_blocked = True
+
+    elif current_user.subscription_status in ("cancelled", "inactive"):
+        subscription_message = "cancelled"
+        is_blocked = True
+
+    return {
+        **UserRead.model_validate(current_user).model_dump(),
+        "dealership_required_tagline": dealership_required_tagline,
+        "subscription_message": subscription_message,
+        "is_blocked": is_blocked,
+    }
 
 
 @router.get("/voices/preloaded")
@@ -169,7 +215,7 @@ async def get_preloaded_voices(
         return {'preview_urls': {}}
 
 
-@router.patch("/me", response_model=UserRead)
+@router.patch("/me")
 async def update_me(
     payload: UserUpdate,
     current_user: Annotated[User, Depends(get_current_user)],
@@ -177,8 +223,21 @@ async def update_me(
 ):
     for key, value in payload.model_dump(exclude_unset=True).items():
         setattr(current_user, key, value)
+    # Normalize empty string → None for optional text fields
+    if payload.model_dump(exclude_unset=True).get("custom_tagline") == "":
+        current_user.custom_tagline = None
     current_user.updated_at = datetime.now(timezone.utc)
     session.add(current_user)
     await session.commit()
     await session.refresh(current_user)
-    return current_user
+
+    dealership_required_tagline = None
+    if current_user.dealership_id:
+        dealership = await session.get(Dealership, current_user.dealership_id)
+        if dealership:
+            dealership_required_tagline = dealership.required_tagline
+
+    return {
+        **UserRead.model_validate(current_user).model_dump(),
+        "dealership_required_tagline": dealership_required_tagline,
+    }
