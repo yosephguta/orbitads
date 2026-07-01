@@ -300,7 +300,7 @@ async def update_me(
     if "preferred_language" in updates:
         if updates["preferred_language"] not in ("en", "es"):
             current_user.preferred_language = "en"
-    current_user.updated_at = datetime.now(timezone.utc)
+    current_user.updated_at = datetime.utcnow()
     session.add(current_user)
     await session.commit()
     await session.refresh(current_user)

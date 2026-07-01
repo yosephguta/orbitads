@@ -56,7 +56,7 @@ DEFAULT_CAR_PHOTOS = [
 async def _update_job(session: AsyncSession, job: Job, **kwargs) -> None:
     for key, value in kwargs.items():
         setattr(job, key, value)
-    job.updated_at = datetime.now(timezone.utc)
+    job.updated_at = datetime.utcnow()
     session.add(job)
     await session.commit()
     await session.refresh(job)
@@ -77,7 +77,7 @@ async def _update_job_safe(job_id: int, **kwargs) -> None:
             return
         for key, value in kwargs.items():
             setattr(job, key, value)
-        job.updated_at = datetime.now(timezone.utc)
+        job.updated_at = datetime.utcnow()
         session.add(job)
         await session.commit()
 
@@ -140,7 +140,7 @@ async def _run_pipeline(job_id: int, user_id: int):
                         f"VIN mismatch: submitted {job_vin} but NHTSA decoded {decoded_vin}. "
                         "This vehicle data may have been mixed up during import."
                     ),
-                    completed_at=datetime.now(timezone.utc),
+                    completed_at=datetime.utcnow(),
                 )
                 return
 
@@ -179,7 +179,7 @@ async def _run_pipeline(job_id: int, user_id: int):
         await _update_job_safe(job_id,
             status=JobStatus.FAILED,
             error_message=f"Script generation failed: {e}",
-            completed_at=datetime.now(timezone.utc),
+            completed_at=datetime.utcnow(),
         )
         try:
             async with AsyncSessionLocal() as session:
@@ -236,7 +236,7 @@ async def _run_pipeline(job_id: int, user_id: int):
         await _update_job_safe(job_id,
             status=JobStatus.FAILED,
             error_message=f"Voice TTS failed: {e}",
-            completed_at=datetime.now(timezone.utc),
+            completed_at=datetime.utcnow(),
         )
         try:
             async with AsyncSessionLocal() as session:
@@ -364,7 +364,7 @@ async def _run_pipeline(job_id: int, user_id: int):
             await _update_job_safe(job_id,
                 status=JobStatus.FAILED,
                 error_message=f"Video assembly failed: {e}",
-                completed_at=datetime.now(timezone.utc),
+                completed_at=datetime.utcnow(),
             )
             try:
                 async with AsyncSessionLocal() as session:
@@ -384,8 +384,8 @@ async def _run_pipeline(job_id: int, user_id: int):
 
     # ── Track analytics ───────────────────────────────────────
     try:
-        now         = datetime.now(timezone.utc)
-        render_secs = int((now - job_created_at.replace(tzinfo=timezone.utc)).total_seconds())
+        now         = datetime.utcnow()
+        render_secs = int((now - job_created_at.replace(tzinfo=None)).total_seconds())
         async with AsyncSessionLocal() as session:
             user = await session.get(User, user_id)
             if user:
@@ -410,7 +410,7 @@ async def _run_pipeline(job_id: int, user_id: int):
     await _update_job_safe(job_id,
         status=JobStatus.COMPLETED,
         progress_pct=100,
-        completed_at=datetime.now(timezone.utc),
+        completed_at=datetime.utcnow(),
     )
 
 
@@ -468,7 +468,7 @@ async def shotstack_webhook(request: Request):
                     final_video_s3_key = final_key,
                     final_video_url    = presigned_url,
                     progress_pct       = 100,
-                    completed_at       = datetime.now(timezone.utc),
+                    completed_at       = datetime.utcnow(),
                 )
                 print(f"Job {job.id} completed via webhook")
 
@@ -476,7 +476,7 @@ async def shotstack_webhook(request: Request):
                 await _update_job_safe(job.id,
                     status        = JobStatus.FAILED,
                     error_message = f"Post-render processing failed: {e}",
-                    completed_at  = datetime.now(timezone.utc),
+                    completed_at  = datetime.utcnow(),
                 )
 
     elif is_failed:
@@ -484,7 +484,7 @@ async def shotstack_webhook(request: Request):
         await _update_job_safe(job.id,
             status        = JobStatus.FAILED,
             error_message = f"Video assembly failed: {error}",
-            completed_at  = datetime.now(timezone.utc),
+            completed_at  = datetime.utcnow(),
         )
         print(f"Job {job.id} failed via webhook: {error}")
 
