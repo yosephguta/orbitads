@@ -181,11 +181,17 @@ def build_ad_timeline_photo_only(
 
 # ── Submit render ─────────────────────────────────────────────
 async def submit_render(timeline: dict) -> str:
+    render_request = dict(timeline)
+
+    # Only register webhook in production — localhost isn't reachable by Shotstack
+    if settings.environment == "production":
+        render_request["callback"] = "https://api.dealersorbit.com/api/v1/jobs/webhook/shotstack"
+
     async with httpx.AsyncClient(timeout=30.0) as client:
         response = await client.post(
             SHOTSTACK_URL,
             headers=_headers(),
-            json=timeline,
+            json=render_request,
         )
         if response.status_code not in (200, 201):
             raise RuntimeError(
@@ -199,6 +205,17 @@ async def submit_render(timeline: dict) -> str:
                 f"Shotstack did not return a render_id. Response: {data}"
             )
         return render_id
+
+
+# ── Delete render ─────────────────────────────────────────────
+async def delete_render(render_id: str) -> bool:
+    """Delete a completed render from Shotstack to free storage."""
+    async with httpx.AsyncClient(timeout=15.0) as client:
+        resp = await client.delete(
+            SHOTSTACK_STATUS_URL.format(render_id=render_id),
+            headers=_headers(),
+        )
+        return resp.status_code in (200, 204)
 
 
 # ── Poll status ───────────────────────────────────────────────
@@ -245,6 +262,63 @@ async def wait_for_render(
     raise RuntimeError(
         f"Shotstack timed out after {max_wait}s. render_id: {render_id}"
     )
+
+
+# ── Webhook-first wait (fallback poll) ───────────────────────
+async def wait_for_render_with_fallback(
+    render_id:     str,
+    poll_interval: int = 15,    # longer interval — webhook should fire first in prod
+    max_wait:      int = 1200,  # 20 minute ceiling
+) -> Optional[str]:
+    """
+    Wait for a Shotstack render with webhook as the primary signal.
+
+    In production, Shotstack POSTs to our webhook the moment rendering finishes,
+    so this fallback poll rarely runs. In dev (localhost), the webhook can't reach
+    us so this always polls through.
+
+    Returns the video URL if fallback polling detected completion.
+    Returns None if the webhook already completed the job.
+    """
+    from sqlmodel import select
+    from app.core.database import AsyncSessionLocal
+    from app.models.job import Job, JobStatus
+
+    elapsed = 0
+    while elapsed < max_wait:
+        await asyncio.sleep(poll_interval)
+        elapsed += poll_interval
+
+        # Check whether the webhook already handled this render
+        async with AsyncSessionLocal() as session:
+            result = await session.exec(
+                select(Job).where(Job.shotstack_render_id == render_id)
+            )
+            job = result.first()
+            if job and job.status == JobStatus.COMPLETED:
+                print(f"Webhook already completed job for render {render_id}")
+                return None
+            if job and job.status == JobStatus.FAILED:
+                return None
+
+        # Webhook hasn't fired yet — poll Shotstack directly
+        try:
+            status_data = await get_render_status(render_id)
+            status = status_data["status"]
+
+            if status == "done":
+                print(f"Fallback poll: render {render_id} done")
+                return status_data.get("url")
+
+            if status == "failed":
+                raise RuntimeError(f"Shotstack render failed: {status_data.get('error')}")
+
+        except RuntimeError:
+            raise
+        except Exception as e:
+            print(f"Fallback poll error (retrying): {e}")
+
+    raise RuntimeError(f"Render timed out after {max_wait}s. render_id: {render_id}")
 
 
 # ── Download video ────────────────────────────────────────────

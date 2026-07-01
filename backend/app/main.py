@@ -30,13 +30,14 @@ app.add_middleware(
 from app.models.ad_event import AdEvent  # noqa — ensures table is created
 from app.models.dealership import Dealership  # noqa — ensures table is created
 from app.api.routes import auth, jobs, uploads, photos, listings, billing, outros
-app.include_router(auth.router,     prefix="/api/v1")
-app.include_router(uploads.router,  prefix="/api/v1")
-app.include_router(jobs.router,     prefix="/api/v1")
-app.include_router(photos.router,   prefix="/api/v1")
-app.include_router(listings.router, prefix="/api/v1")
-app.include_router(billing.router,  prefix="/api/v1")
-app.include_router(outros.router,   prefix="/api/v1")
+app.include_router(auth.router,           prefix="/api/v1")
+app.include_router(uploads.router,        prefix="/api/v1")
+app.include_router(jobs.router,           prefix="/api/v1")
+app.include_router(jobs.webhook_router,   prefix="/api/v1")  # no auth — called by Shotstack
+app.include_router(photos.router,         prefix="/api/v1")
+app.include_router(listings.router,       prefix="/api/v1")
+app.include_router(billing.router,        prefix="/api/v1")
+app.include_router(outros.router,         prefix="/api/v1")
 
 @app.get("/health", tags=["infra"])
 async def health():

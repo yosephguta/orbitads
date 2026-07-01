@@ -4,7 +4,7 @@ import json
 from datetime import datetime, timezone
 from typing import Annotated
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, status
 from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
@@ -20,6 +20,8 @@ from app.services.video_assembler import (
     build_ad_timeline_photo_only,
     submit_render,
     wait_for_render,
+    wait_for_render_with_fallback,
+    delete_render,
     download_render,
 )
 from app.services.s3 import (
@@ -37,6 +39,9 @@ router = APIRouter(
     tags=["jobs"],
     dependencies=[Depends(require_active_subscription)],
 )
+
+# Separate router for Shotstack webhook — no auth, called by Shotstack directly
+webhook_router = APIRouter(prefix="/jobs", tags=["jobs"])
 
 BRIAN_VOICE_ID = "Gubgw9l4dtIoQA9YZHgx"
 CLAUS_VOICE_ID = "zDMHo7CPscBTgfDtPOWl"
@@ -57,6 +62,26 @@ async def _update_job(session: AsyncSession, job: Job, **kwargs) -> None:
     await session.refresh(job)
 
 
+async def _update_job_safe(job_id: int, **kwargs) -> None:
+    """Open a fresh DB connection for each status update.
+
+    The pipeline runs 5-15 minutes. Holding one session that long risks a
+    dropped connection (AWS NAT gateway idle timeout is ~350 s). Each call
+    here gets a fresh pooled connection, so pool_pre_ping catches any stale
+    ones before they're used.
+    """
+    from app.core.database import AsyncSessionLocal
+    async with AsyncSessionLocal() as session:
+        job = await session.get(Job, job_id)
+        if not job:
+            return
+        for key, value in kwargs.items():
+            setattr(job, key, value)
+        job.updated_at = datetime.now(timezone.utc)
+        session.add(job)
+        await session.commit()
+
+
 # ── Pipeline ──────────────────────────────────────────────────
 async def _run_pipeline(job_id: int, user_id: int):
     """
@@ -73,275 +98,397 @@ async def _run_pipeline(job_id: int, user_id: int):
     from app.models.outro_video import OutroVideo
     settings = get_settings()
 
+    # Fetch initial data then immediately release the session.
+    # All subsequent DB writes use _update_job_safe (fresh connection each time).
     async with AsyncSessionLocal() as session:
-        job = await session.get(Job, job_id)
+        job  = await session.get(Job, job_id)
         user = await session.get(User, user_id)
-
         if not job or not user:
             return
 
-        print(f"Pipeline start — job_id={job_id}, vin={job.vin!r}, theme={job.theme!r}, video_type={job.video_type!r}, language={job.language!r}")
+        job_vin                     = job.vin
+        job_theme                   = job.theme
+        job_video_type              = job.video_type
+        job_language                = job.language or 'en'
+        job_custom_script           = job.custom_script
+        job_car_photo_urls          = job.car_photo_urls
+        job_price                   = job.price
+        job_outro_video_id          = job.outro_video_id
+        job_created_at              = job.created_at
 
-        # ── Stage 1: VIN decode ───────────────────────────────
-        await _update_job(session, job, status=JobStatus.VIN_DECODING, progress_pct=10)
-        try:
-            vehicle_data = await decode_vin(job.vin) if job.vin else {}
+        user_full_name              = user.full_name
+        user_dealership_name        = user.dealership_name
+        user_phone_number           = user.phone_number
+        user_elevenlabs_voice_id    = user.elevenlabs_voice_id
+        user_elevenlabs_voice_id_es = user.elevenlabs_voice_id_es
 
-            # Sanity check: decoded VIN must match the job's VIN
-            if job.vin and vehicle_data:
-                decoded_vin = vehicle_data.get("vin", "").upper()
-                if decoded_vin and decoded_vin != job.vin.upper():
-                    print(f"VIN MISMATCH — job.vin={job.vin!r}, decoded={decoded_vin!r}. Failing job.")
-                    await _update_job(session, job,
-                        status=JobStatus.FAILED,
-                        error_message=(
-                            f"VIN mismatch: submitted {job.vin} but NHTSA decoded {decoded_vin}. "
-                            "This vehicle data may have been mixed up during import."
-                        ),
-                        completed_at=datetime.now(timezone.utc),
-                    )
-                    return
+    print(f"Pipeline start — job_id={job_id}, vin={job_vin!r}, theme={job_theme!r}, video_type={job_video_type!r}, language={job_language!r}")
 
-            await _update_job(session, job, vehicle_data=json.dumps(vehicle_data), progress_pct=30)
-        except Exception as e:
-            print(f"VIN decode failed (non-fatal): {e}")
-            vehicle_data = {}
-            await _update_job(session, job, vehicle_data=json.dumps(vehicle_data), progress_pct=30)
+    # ── Stage 1: VIN decode ───────────────────────────────
+    await _update_job_safe(job_id, status=JobStatus.VIN_DECODING, progress_pct=10)
+    try:
+        vehicle_data = await decode_vin(job_vin) if job_vin else {}
 
-        # ── Stage 2: Script generation ────────────────────────
-        vd = vehicle_data if isinstance(vehicle_data, dict) else {}
-        await _update_job(session, job, status=JobStatus.SCRIPT_GENERATING, progress_pct=35)
-        try:
-            if job.custom_script:
-                script = {
-                    "full_script": job.custom_script,
-                    "hook":        job.custom_script[:50],
-                    "body":        job.custom_script,
-                    "cta":         "",
-                    "theme":       "custom",
-                }
-                print(f"Using custom script: {job.custom_script[:50]}...")
-            else:
-                script = await generate_ad_script(
-                    vehicle_data=vd,
-                    theme=job.theme or "family",
-                    salesperson_name=user.full_name,
-                    dealership_name=None,
-                    phone_number=user.phone_number or None,
-                    include_cta=(job.video_type != "with_outro"),
-                    price=job.price or None,
-                    language=job.language or 'en',
+        # Sanity check: decoded VIN must match the job's VIN
+        if job_vin and vehicle_data:
+            decoded_vin = vehicle_data.get("vin", "").upper()
+            if decoded_vin and decoded_vin != job_vin.upper():
+                print(f"VIN MISMATCH — job.vin={job_vin!r}, decoded={decoded_vin!r}. Failing job.")
+                await _update_job_safe(job_id,
+                    status=JobStatus.FAILED,
+                    error_message=(
+                        f"VIN mismatch: submitted {job_vin} but NHTSA decoded {decoded_vin}. "
+                        "This vehicle data may have been mixed up during import."
+                    ),
+                    completed_at=datetime.now(timezone.utc),
                 )
-            await _update_job(session, job, generated_script=json.dumps(script), progress_pct=50)
-        except Exception as e:
-            await _update_job(session, job,
-                status=JobStatus.FAILED,
-                error_message=f"Script generation failed: {e}",
-                completed_at=datetime.now(timezone.utc),
-            )
-            try:
-                await track_generation(
-                    session=session, user=user, job_id=job.id,
-                    vehicle_data=vd, video_format=job.video_type or 'slideshow',
-                    theme=job.theme or 'family', voice_id=user.elevenlabs_voice_id or BRIAN_VOICE_ID,
-                    custom_script=bool(job.custom_script), photos_count=0,
-                    render_seconds=0, succeeded=False, failure_reason=str(e),
-                    language=job.language or 'en',
-                )
-            except Exception:
-                pass
-            return
+                return
 
-        # ── Stage 3: Voice TTS ────────────────────────────────
-        if job.language == 'es':
-            effective_voice_id = user.elevenlabs_voice_id_es or CLAUS_VOICE_ID
+        await _update_job_safe(job_id, vehicle_data=json.dumps(vehicle_data), progress_pct=30)
+    except Exception as e:
+        print(f"VIN decode failed (non-fatal): {e}")
+        vehicle_data = {}
+        await _update_job_safe(job_id, vehicle_data=json.dumps(vehicle_data), progress_pct=30)
+
+    # ── Stage 2: Script generation ────────────────────────
+    vd = vehicle_data if isinstance(vehicle_data, dict) else {}
+    await _update_job_safe(job_id, status=JobStatus.SCRIPT_GENERATING, progress_pct=35)
+    try:
+        if job_custom_script:
+            script = {
+                "full_script": job_custom_script,
+                "hook":        job_custom_script[:50],
+                "body":        job_custom_script,
+                "cta":         "",
+                "theme":       "custom",
+            }
+            print(f"Using custom script: {job_custom_script[:50]}...")
         else:
-            effective_voice_id = user.elevenlabs_voice_id or BRIAN_VOICE_ID
-
-        audio_s3_key = None
-        await _update_job(session, job, status=JobStatus.VOICE_CLONING, progress_pct=55)
+            script = await generate_ad_script(
+                vehicle_data=vd,
+                theme=job_theme or "family",
+                salesperson_name=user_full_name,
+                dealership_name=None,
+                phone_number=user_phone_number or None,
+                include_cta=(job_video_type != "with_outro"),
+                price=job_price or None,
+                language=job_language,
+            )
+        await _update_job_safe(job_id, generated_script=json.dumps(script), progress_pct=50)
+    except Exception as e:
+        await _update_job_safe(job_id,
+            status=JobStatus.FAILED,
+            error_message=f"Script generation failed: {e}",
+            completed_at=datetime.now(timezone.utc),
+        )
         try:
-            audio_bytes = await text_to_speech(
-                text=script["full_script"],
-                voice_id=effective_voice_id,
-            )
-
-            # Normalize voiceover loudness to -22 dBFS (quieter for video)
-            try:
-                from pydub import AudioSegment
-                from pydub.effects import normalize
-                import io as _io
-
-                seg = AudioSegment.from_mp3(_io.BytesIO(audio_bytes))
-                seg = normalize(seg)
-                target_dBFS = -22.0
-                seg = seg.apply_gain(target_dBFS - seg.dBFS)
-                buf = _io.BytesIO()
-                seg.export(buf, format="mp3", bitrate="192k")
-                audio_bytes = buf.getvalue()
-                print(f"Audio normalized to {target_dBFS} dBFS")
-            except Exception as norm_err:
-                print(f"Audio normalization failed (non-fatal): {norm_err}")
-
-            audio_key = make_audio_output_key(job.id)
-            upload_bytes(audio_bytes, audio_key, "audio/mpeg")
-            audio_s3_key = audio_key
-            await _update_job(session, job, progress_pct=70)
-        except Exception as e:
-            await _update_job(session, job,
-                status=JobStatus.FAILED,
-                error_message=f"Voice TTS failed: {e}",
-                completed_at=datetime.now(timezone.utc),
-            )
-            try:
-                await track_generation(
-                    session=session, user=user, job_id=job.id,
-                    vehicle_data=vd, video_format=job.video_type or 'slideshow',
-                    theme=job.theme or 'family', voice_id=effective_voice_id,
-                    custom_script=bool(job.custom_script), photos_count=0,
-                    render_seconds=0, succeeded=False, failure_reason=str(e),
-                    language=job.language or 'en',
-                )
-            except Exception:
-                pass
-            return
-
-        # ── Stage 4: Video assembly ───────────────────────────
-        print(f"Stage 4 — video_type: {job.video_type}, audio_s3_key: {audio_s3_key}")
-        if audio_s3_key:
-            await _update_job(session, job, status=JobStatus.ASSEMBLING, progress_pct=75)
-            try:
-                audio_url = (
-                    f"https://{settings.s3_bucket_name}.s3."
-                    f"{settings.aws_region}.amazonaws.com/{audio_s3_key}"
-                )
-                audio_duration = get_audio_duration(audio_s3_key)
-
-                # Reviewed car photos
-                car_photos = DEFAULT_CAR_PHOTOS
-                if job.car_photo_urls:
-                    try:
-                        car_photos = json.loads(job.car_photo_urls)
-                    except Exception:
-                        car_photos = DEFAULT_CAR_PHOTOS
-
-                try:
-                    from app.services.photo_classifier import get_walkaround_photos
-                    car_photos = await get_walkaround_photos(
-                        photo_urls=car_photos,
-                        exterior_count=5,
-                        interior_count=2,
+            async with AsyncSessionLocal() as session:
+                user = await session.get(User, user_id)
+                if user:
+                    await track_generation(
+                        session=session, user=user, job_id=job_id,
+                        vehicle_data=vd, video_format=job_video_type or 'slideshow',
+                        theme=job_theme or 'family', voice_id=user_elevenlabs_voice_id or BRIAN_VOICE_ID,
+                        custom_script=bool(job_custom_script), photos_count=0,
+                        render_seconds=0, succeeded=False, failure_reason=str(e),
+                        language=job_language,
                     )
-                    print(f"Walkaround photos: {len(car_photos)}")
-                except Exception as e:
-                    print(f"Walkaround ordering failed: {e}")
-                    car_photos = car_photos[:7]
+        except Exception:
+            pass
+        return
 
-                vd = json.loads(job.vehicle_data) if job.vehicle_data else {}
-                highlights = _build_highlights(vd, user.dealership_name)
-                from app.services.vin_decoder import vehicle_summary
-                v_summary = vehicle_summary(vd) if vd else "Visit us today"
+    # ── Stage 3: Voice TTS ────────────────────────────────
+    if job_language == 'es':
+        effective_voice_id = user_elevenlabs_voice_id_es or CLAUS_VOICE_ID
+    else:
+        effective_voice_id = user_elevenlabs_voice_id or BRIAN_VOICE_ID
 
-                # Fetch outro clip and calculate slideshow volume to match
-                outro_url = None
-                outro_duration = 8.0
-                slideshow_volume = 1.0
-                if job.video_type == "with_outro" and job.outro_video_id:
-                    outro = await session.get(OutroVideo, job.outro_video_id)
+    audio_s3_key = None
+    await _update_job_safe(job_id, status=JobStatus.VOICE_CLONING, progress_pct=55)
+    try:
+        audio_bytes = await text_to_speech(
+            text=script["full_script"],
+            voice_id=effective_voice_id,
+        )
+
+        # Normalize voiceover loudness to -22 dBFS (quieter for video)
+        try:
+            from pydub import AudioSegment
+            from pydub.effects import normalize
+            import io as _io
+
+            seg = AudioSegment.from_mp3(_io.BytesIO(audio_bytes))
+            seg = normalize(seg)
+            target_dBFS = -22.0
+            seg = seg.apply_gain(target_dBFS - seg.dBFS)
+            buf = _io.BytesIO()
+            seg.export(buf, format="mp3", bitrate="192k")
+            audio_bytes = buf.getvalue()
+            print(f"Audio normalized to {target_dBFS} dBFS")
+        except Exception as norm_err:
+            print(f"Audio normalization failed (non-fatal): {norm_err}")
+
+        audio_key = make_audio_output_key(job_id)
+        upload_bytes(audio_bytes, audio_key, "audio/mpeg")
+        audio_s3_key = audio_key
+        await _update_job_safe(job_id, progress_pct=70)
+    except Exception as e:
+        await _update_job_safe(job_id,
+            status=JobStatus.FAILED,
+            error_message=f"Voice TTS failed: {e}",
+            completed_at=datetime.now(timezone.utc),
+        )
+        try:
+            async with AsyncSessionLocal() as session:
+                user = await session.get(User, user_id)
+                if user:
+                    await track_generation(
+                        session=session, user=user, job_id=job_id,
+                        vehicle_data=vd, video_format=job_video_type or 'slideshow',
+                        theme=job_theme or 'family', voice_id=effective_voice_id,
+                        custom_script=bool(job_custom_script), photos_count=0,
+                        render_seconds=0, succeeded=False, failure_reason=str(e),
+                        language=job_language,
+                    )
+        except Exception:
+            pass
+        return
+
+    # ── Stage 4: Video assembly ───────────────────────────
+    print(f"Stage 4 — video_type: {job_video_type}, audio_s3_key: {audio_s3_key}")
+    if audio_s3_key:
+        await _update_job_safe(job_id, status=JobStatus.ASSEMBLING, progress_pct=75)
+        try:
+            audio_url = (
+                f"https://{settings.s3_bucket_name}.s3."
+                f"{settings.aws_region}.amazonaws.com/{audio_s3_key}"
+            )
+            audio_duration = get_audio_duration(audio_s3_key)
+
+            # Reviewed car photos
+            car_photos = DEFAULT_CAR_PHOTOS
+            if job_car_photo_urls:
+                try:
+                    car_photos = json.loads(job_car_photo_urls)
+                except Exception:
+                    car_photos = DEFAULT_CAR_PHOTOS
+
+            try:
+                from app.services.photo_classifier import get_walkaround_photos
+                car_photos = await get_walkaround_photos(
+                    photo_urls=car_photos,
+                    exterior_count=5,
+                    interior_count=2,
+                )
+                print(f"Walkaround photos: {len(car_photos)}")
+            except Exception as e:
+                print(f"Walkaround ordering failed: {e}")
+                car_photos = car_photos[:7]
+
+            highlights = _build_highlights(vd, user_dealership_name)
+            from app.services.vin_decoder import vehicle_summary
+            v_summary = vehicle_summary(vd) if vd else "Visit us today"
+
+            # Fetch outro clip with a fresh session
+            outro_url        = None
+            outro_duration   = 8.0
+            slideshow_volume = 1.0
+            if job_video_type == "with_outro" and job_outro_video_id:
+                async with AsyncSessionLocal() as session:
+                    outro = await session.get(OutroVideo, job_outro_video_id)
                     if outro and outro.user_id == user_id:
-                        outro_url = create_presigned_download_url(outro.s3_key, expires_in=3600)
+                        outro_s3_key   = outro.s3_key
+                        outro_url      = create_presigned_download_url(outro_s3_key, expires_in=3600)
                         outro_duration = outro.duration_seconds or 8.0
                         print(f"Outro: {outro.name}, {outro_duration}s")
-
-                        # Measure outro audio level and reduce slideshow volume to match
-                        try:
-                            outro_level = await get_audio_level(outro.s3_key)
-                            if outro_level is not None:
-                                voiceover_target = -22.0  # normalized voiceover level
-                                slideshow_volume = calculate_volume_multiplier(outro_level, voiceover_target)
-                                print(f"Audio balance: outro={outro_level:.1f}dBFS, slideshow_volume={slideshow_volume:.2f}")
-                        except Exception as e:
-                            print(f"Audio level measurement failed, using default: {e}")
-                            slideshow_volume = 1.0
                     else:
                         print("Outro not found — assembling slideshow only")
+                        outro_s3_key = None
 
-                timeline = build_ad_timeline_photo_only(
-                    audio_url=audio_url,
-                    car_photo_urls=car_photos,
-                    dealership_name=user.dealership_name,
-                    vehicle_summary=v_summary,
-                    feature_highlights=highlights,
-                    duration=audio_duration,
-                    brand_color="#C4122F",
-                    outro_video_url=outro_url,
-                    outro_duration=outro_duration,
-                    slideshow_volume=slideshow_volume,
-                    language=job.language or 'en',
-                )
+                if outro_url and outro_s3_key:
+                    try:
+                        outro_level = await get_audio_level(outro_s3_key)
+                        if outro_level is not None:
+                            voiceover_target = -22.0
+                            slideshow_volume = calculate_volume_multiplier(outro_level, voiceover_target)
+                            print(f"Audio balance: outro={outro_level:.1f}dBFS, slideshow_volume={slideshow_volume:.2f}")
+                    except Exception as e:
+                        print(f"Audio level measurement failed, using default: {e}")
+                        slideshow_volume = 1.0
 
-                render_id = await submit_render(timeline)
-                final_video_url = await wait_for_render(render_id)
-                final_bytes = await download_render(final_video_url)
-                final_key = make_final_video_key(job.id)
+            timeline = build_ad_timeline_photo_only(
+                audio_url=audio_url,
+                car_photo_urls=car_photos,
+                dealership_name=user_dealership_name,
+                vehicle_summary=v_summary,
+                feature_highlights=highlights,
+                duration=audio_duration,
+                brand_color="#C4122F",
+                outro_video_url=outro_url,
+                outro_duration=outro_duration,
+                slideshow_volume=slideshow_volume,
+                language=job_language,
+            )
+
+            render_id = await submit_render(timeline)
+
+            # Store render_id so the webhook endpoint can look up this job
+            await _update_job_safe(job_id,
+                shotstack_render_id=render_id,
+                status=JobStatus.ASSEMBLING,
+                progress_pct=85,
+            )
+            print(f"Shotstack render submitted: {render_id} — waiting for webhook or fallback poll")
+
+            fallback_url = await wait_for_render_with_fallback(render_id)
+
+            if fallback_url:
+                # Webhook didn't fire (dev, or missed) — fallback polling got the URL
+                final_bytes = await download_render(fallback_url)
+                final_key = make_final_video_key(job_id)
                 upload_bytes(final_bytes, final_key, "video/mp4")
                 presigned_url = create_presigned_download_url(final_key, expires_in=604800)
 
-                await _update_job(session, job,
+                try:
+                    await delete_render(render_id)
+                except Exception:
+                    pass
+
+                await _update_job_safe(job_id,
                     final_video_s3_key=final_key,
                     final_video_url=presigned_url,
                     progress_pct=100,
                 )
 
-            except Exception as e:
-                await _update_job(session, job,
-                    status=JobStatus.FAILED,
-                    error_message=f"Video assembly failed: {e}",
-                    completed_at=datetime.now(timezone.utc),
+        except Exception as e:
+            await _update_job_safe(job_id,
+                status=JobStatus.FAILED,
+                error_message=f"Video assembly failed: {e}",
+                completed_at=datetime.now(timezone.utc),
+            )
+            try:
+                async with AsyncSessionLocal() as session:
+                    user = await session.get(User, user_id)
+                    if user:
+                        await track_generation(
+                            session=session, user=user, job_id=job_id,
+                            vehicle_data=vd, video_format=job_video_type or 'slideshow',
+                            theme=job_theme or 'family', voice_id=effective_voice_id,
+                            custom_script=bool(job_custom_script), photos_count=0,
+                            render_seconds=0, succeeded=False, failure_reason=str(e),
+                            language=job_language,
+                        )
+            except Exception:
+                pass
+            return
+
+    # ── Track analytics ───────────────────────────────────────
+    try:
+        now         = datetime.now(timezone.utc)
+        render_secs = int((now - job_created_at.replace(tzinfo=timezone.utc)).total_seconds())
+        async with AsyncSessionLocal() as session:
+            user = await session.get(User, user_id)
+            if user:
+                await track_generation(
+                    session        = session,
+                    user           = user,
+                    job_id         = job_id,
+                    vehicle_data   = vd,
+                    video_format   = job_video_type or 'slideshow',
+                    theme          = job_theme or 'family',
+                    voice_id       = effective_voice_id,
+                    custom_script  = bool(job_custom_script),
+                    photos_count   = len(json.loads(job_car_photo_urls)) if job_car_photo_urls else 0,
+                    render_seconds = render_secs,
+                    succeeded      = True,
+                    language       = job_language,
                 )
+    except Exception as e:
+        print(f'Analytics tracking failed (non-fatal): {e}')
+
+    # ── Done ─────────────────────────────────────────────
+    await _update_job_safe(job_id,
+        status=JobStatus.COMPLETED,
+        progress_pct=100,
+        completed_at=datetime.now(timezone.utc),
+    )
+
+
+@webhook_router.post("/webhook/shotstack")
+async def shotstack_webhook(request: Request):
+    """
+    Shotstack calls this URL when a render completes or fails.
+    Eliminates polling delay — job is marked complete the instant Shotstack finishes.
+    """
+    try:
+        payload = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid JSON")
+
+    print(f"Shotstack webhook received: {payload}")
+
+    event_type = payload.get("type", "")
+    render_id  = payload.get("id") or payload.get("data", {}).get("id")
+
+    if not render_id:
+        return {"received": True}
+
+    # Find the job that submitted this render
+    from app.core.database import AsyncSessionLocal
+    async with AsyncSessionLocal() as session:
+        result = await session.exec(
+            select(Job).where(Job.shotstack_render_id == render_id)
+        )
+        job = result.first()
+
+    if not job:
+        print(f"Shotstack webhook: no job found for render_id {render_id}")
+        return {"received": True}
+
+    is_done    = "done"   in event_type or payload.get("data", {}).get("status") == "done"
+    is_failed  = "failed" in event_type or payload.get("data", {}).get("status") == "failed"
+
+    if is_done:
+        video_url = payload.get("data", {}).get("url")
+        if video_url:
+            try:
+                final_bytes   = await download_render(video_url)
+                final_key     = make_final_video_key(job.id)
+                upload_bytes(final_bytes, final_key, "video/mp4")
+                presigned_url = create_presigned_download_url(final_key, expires_in=604800)
+
                 try:
-                    video_dict = json.loads(job.vehicle_data) if job.vehicle_data else {}
-                    await track_generation(
-                        session=session, user=user, job_id=job.id,
-                        vehicle_data=video_dict, video_format=job.video_type or 'slideshow',
-                        theme=job.theme or 'family', voice_id=effective_voice_id,
-                        custom_script=bool(job.custom_script), photos_count=0,
-                        render_seconds=0, succeeded=False, failure_reason=str(e),
-                        language=job.language or 'en',
-                    )
+                    await delete_render(render_id)
+                    print(f"Deleted render {render_id} from Shotstack")
                 except Exception:
                     pass
-                return
 
-        # ── Track analytics ───────────────────────────────────────
-        try:
-            pipeline_start = job.created_at
-            now            = datetime.now(timezone.utc)
-            render_secs    = int((now - pipeline_start.replace(tzinfo=timezone.utc)).total_seconds())
-            vehicle_dict   = json.loads(job.vehicle_data) if job.vehicle_data else {}
-            await track_generation(
-                session        = session,
-                user           = user,
-                job_id         = job.id,
-                vehicle_data   = vehicle_dict,
-                video_format   = job.video_type or 'slideshow',
-                theme          = job.theme or 'family',
-                voice_id       = effective_voice_id,
-                custom_script  = bool(job.custom_script),
-                photos_count   = len(json.loads(job.car_photo_urls)) if job.car_photo_urls else 0,
-                render_seconds = render_secs,
-                succeeded      = True,
-                language       = job.language or 'en',
-            )
-        except Exception as e:
-            print(f'Analytics tracking failed (non-fatal): {e}')
+                await _update_job_safe(job.id,
+                    status             = JobStatus.COMPLETED,
+                    final_video_s3_key = final_key,
+                    final_video_url    = presigned_url,
+                    progress_pct       = 100,
+                    completed_at       = datetime.now(timezone.utc),
+                )
+                print(f"Job {job.id} completed via webhook")
 
-        # ── Done ─────────────────────────────────────────────
-        await _update_job(session, job,
-            status=JobStatus.COMPLETED,
-            progress_pct=100,
-            completed_at=datetime.now(timezone.utc),
+            except Exception as e:
+                await _update_job_safe(job.id,
+                    status        = JobStatus.FAILED,
+                    error_message = f"Post-render processing failed: {e}",
+                    completed_at  = datetime.now(timezone.utc),
+                )
+
+    elif is_failed:
+        error = payload.get("data", {}).get("error", "Shotstack render failed")
+        await _update_job_safe(job.id,
+            status        = JobStatus.FAILED,
+            error_message = f"Video assembly failed: {error}",
+            completed_at  = datetime.now(timezone.utc),
         )
+        print(f"Job {job.id} failed via webhook: {error}")
+
+    return {"received": True}
 
 
 def _build_highlights(vd: dict, dealership_name: str) -> list[str]:

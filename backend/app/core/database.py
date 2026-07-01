@@ -26,6 +26,7 @@ engine = create_async_engine(
     pool_size=10,
     max_overflow=20,
     pool_pre_ping=True,
+    pool_recycle=300,  # recycle connections every 5 min — prevents NAT/PG idle timeout drops
 )
 
 # ── Session factory ───────────────────────────────────────────

@@ -47,6 +47,9 @@ class Job(SQLModel, table=True):
     final_video_s3_key: Optional[str] = Field(default=None, max_length=512)
     final_video_url: Optional[str] = Field(default=None, max_length=2048)
 
+    # ── Shotstack ─────────────────────────────────────────────
+    shotstack_render_id: Optional[str] = Field(default=None, max_length=100)
+
     # ── Status ────────────────────────────────────────────────
     status: JobStatus = Field(default=JobStatus.PENDING)
     error_message: Optional[str] = Field(default=None, sa_column=Column(Text))
