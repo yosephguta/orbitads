@@ -15,6 +15,7 @@ class Dealership(SQLModel, table=True):
     invite_code:      Optional[str] = Field(default=None, max_length=20, unique=True)
     required_tagline: Optional[str] = Field(default=None, max_length=200)
     required_tagline_es: Optional[str] = Field(default=None, max_length=200)
+    platform_id:      Optional[int] = Field(default=None, foreign_key='dealer_platforms.id')
     created_at:       datetime      = Field(
         default_factory=datetime.utcnow
     )
