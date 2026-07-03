@@ -50,9 +50,9 @@ async def send_weekly_reports():
                 html = format_user_report_email(user, stats, week_start)
 
                 resend.Emails.send({
-                    'from':    'OrbitAds <reports@mail.dealersorbit.com>',
+                    'from':    'DealersOrbit <reports@mail.dealersorbit.com>',
                     'to':      [user.email],
-                    'subject': f'Your OrbitAds Week in Review — {week_start.strftime("%b %d")}',
+                    'subject': f'Your DealersOrbit Week in Review — {week_start.strftime("%b %d")}',
                     'html':    html,
                 })
 
@@ -102,7 +102,7 @@ async def send_weekly_reports():
                 )
 
                 resend.Emails.send({
-                    'from':    'OrbitAds <reports@mail.dealersorbit.com>',
+                    'from':    'DealersOrbit <reports@mail.dealersorbit.com>',
                     'to':      [manager.email],
                     'subject': f'Team Report — {dealership.dealership_name} — {week_start.strftime("%b %d")}',
                     'html':    html,

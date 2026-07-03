@@ -32,7 +32,7 @@ def require_active_subscription(
             status_code=status.HTTP_403_FORBIDDEN,
             detail={
                 "error": "email_not_verified",
-                "message": "Please verify your email address before using OrbitAds. Check your inbox for the verification link.",
+                "message": "Please verify your email address before using DealersOrbit. Check your inbox for the verification link.",
             }
         )
 

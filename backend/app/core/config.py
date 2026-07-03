@@ -18,7 +18,7 @@ class Settings(BaseSettings):
     )
 
     # ── App ───────────────────────────────────────────────────
-    app_name: str = "OrbitAds"
+    app_name: str = "DealersOrbit"
     app_version: str = "0.1.0"
     environment: str = "development"   # development | production
     debug: bool = True

@@ -99,7 +99,7 @@ def format_user_report_email(
     return f'''
 <div style="font-family:-apple-system,sans-serif;max-width:600px;margin:0 auto;padding:20px">
   <div style="background:#1a56db;color:white;padding:24px;border-radius:12px 12px 0 0;text-align:center">
-    <h1 style="margin:0;font-size:24px">OrbitAds Weekly Report</h1>
+    <h1 style="margin:0;font-size:24px">DealersOrbit Weekly Report</h1>
     <p style="margin:8px 0 0;opacity:0.8">Week of {week_str}</p>
   </div>
 
@@ -164,7 +164,7 @@ def format_user_report_email(
     </div>
 
     <p style="margin-top:20px;font-size:12px;color:#9ca3af;text-align:center">
-      OrbitAds by DealersOrbit ·
+      DealersOrbit ·
       <a href="https://dealersorbit.com" style="color:#1a56db">dealersorbit.com</a>
     </p>
   </div>
@@ -212,7 +212,7 @@ def format_manager_report_email(
 
   <div style="background:white;border:1px solid #e5e7eb;border-top:none;padding:24px;border-radius:0 0 12px 12px">
     <p style="font-size:16px;color:#374151">Hi {manager.full_name or 'there'} 👋</p>
-    <p style="color:#6b7280">Here's how your team performed on OrbitAds this week.</p>
+    <p style="color:#6b7280">Here's how your team performed on DealersOrbit this week.</p>
 
     <div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:10px;margin:20px 0">
       <div style="background:#f8faff;border:1px solid #dbeafe;border-radius:8px;padding:12px;text-align:center">
@@ -250,7 +250,7 @@ def format_manager_report_email(
     </table>
 
     <p style="margin-top:20px;font-size:12px;color:#9ca3af;text-align:center">
-      OrbitAds Manager Dashboard ·
+      DealersOrbit Manager Dashboard ·
       <a href="https://dealersorbit.com" style="color:#1a56db">dealersorbit.com</a>
     </p>
   </div>

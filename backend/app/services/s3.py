@@ -3,7 +3,7 @@ from __future__ import annotations
 """
 S3 Service
 ───────────
-Handles all file storage for OrbitAds.
+Handles all file storage for DealersOrbit.
 
 Files stored:
   uploads/{user_id}/photos/{uuid}.jpg   — salesperson photos
