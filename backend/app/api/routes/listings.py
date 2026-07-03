@@ -306,7 +306,7 @@ async def clear_sold(
     listing.is_sold          = False
     listing.sold_detected_at = None
     listing.fb_posted        = False
-    listing.updated_at       = datetime.now(timezone.utc)
+    listing.updated_at       = datetime.utcnow()
     session.add(listing)
     await session.commit()
     return {"success": True}
@@ -324,8 +324,8 @@ async def mark_posted(
         raise HTTPException(status_code=404, detail="Listing not found")
 
     listing.fb_posted    = True
-    listing.fb_posted_at = datetime.now(timezone.utc)
-    listing.updated_at   = datetime.now(timezone.utc)
+    listing.fb_posted_at = datetime.utcnow()
+    listing.updated_at   = datetime.utcnow()
     session.add(listing)
     await session.commit()
 
@@ -614,7 +614,7 @@ async def check_sold(
                 # Rate limited — skip, try again later
                 if resp.status_code == 429:
                     print(f'Rate limited for listing {listing_id} — skipping')
-                    listing.last_checked_at = datetime.now(timezone.utc)
+                    listing.last_checked_at = datetime.utcnow()
                     await session.commit()
                     continue
 
@@ -637,7 +637,7 @@ async def check_sold(
                         is_sold = True
                     else:
                         print(f'Listing {listing_id} got {resp.status_code} then {confirm.status_code} on confirm — skipping')
-                        listing.last_checked_at = datetime.now(timezone.utc)
+                        listing.last_checked_at = datetime.utcnow()
                         await session.commit()
                         continue
                 elif resp.status_code == 200:
@@ -678,12 +678,12 @@ async def check_sold(
                 await asyncio.sleep(2)
 
                 # Update last checked
-                listing.last_checked_at = datetime.now(timezone.utc)
-                listing.updated_at      = datetime.now(timezone.utc)
+                listing.last_checked_at = datetime.utcnow()
+                listing.updated_at      = datetime.utcnow()
 
                 if is_sold and not listing.is_sold:
                     listing.is_sold          = True
-                    listing.sold_detected_at = datetime.now(timezone.utc)
+                    listing.sold_detected_at = datetime.utcnow()
                     sold_ids.append(listing_id)
                     print(f'Listing {listing_id} marked as SOLD')
 
@@ -708,7 +708,7 @@ async def update_sold_status(
     Called by the extension after it checks listing URLs directly.
     Extension passes which listings were checked and which are confirmed sold.
     """
-    now = datetime.now(timezone.utc)
+    now = datetime.utcnow()
     confirmed_sold = []
 
     for listing_id in payload.checked_ids:

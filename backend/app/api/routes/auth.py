@@ -58,7 +58,7 @@ async def register(
         hashed_password=hash_password(payload.password),
         role="salesperson",
         subscription_status="trial",
-        trial_ends_at=datetime.now(timezone.utc) + timedelta(days=14),
+        trial_ends_at=datetime.utcnow() + timedelta(days=14),
         is_verified=False,
         verification_token=token,
         elevenlabs_voice_id="Gubgw9l4dtIoQA9YZHgx",  # Brian — default voice
@@ -89,7 +89,7 @@ async def verify_email(
 
     user.is_verified = True
     user.verification_token = None
-    user.updated_at = datetime.now(timezone.utc)
+    user.updated_at = datetime.utcnow()
     session.add(user)
     await session.commit()
 

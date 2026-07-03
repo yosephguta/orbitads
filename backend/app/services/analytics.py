@@ -67,7 +67,7 @@ async def track_generation(
     failure_reason: Optional[str] = None,
     language:       str = 'en',
 ) -> None:
-    now = datetime.now(timezone.utc)
+    now = datetime.utcnow()
 
     event = AdEvent(
         user_id               = user.id,
@@ -108,7 +108,7 @@ async def track_posting(
     job_created_at: Optional[datetime] = None,
     groups_count:   int = 0,
 ) -> None:
-    now = datetime.now(timezone.utc)
+    now = datetime.utcnow()
 
     time_since_hours = None
     if job_created_at:
@@ -144,7 +144,7 @@ async def track_sold(
     listing_id:   int,
     vehicle_data: dict,
 ) -> None:
-    now = datetime.now(timezone.utc)
+    now = datetime.utcnow()
     event = AdEvent(
         user_id               = user.id,
         dealership_id         = user.dealership_id,
