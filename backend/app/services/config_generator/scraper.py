@@ -8,21 +8,48 @@ import asyncio
 import re
 from playwright.async_api import async_playwright, Page
 
-# Ordered from most specific to most generic
+# Ordered from most specific to most generic.
+# Covers: Dealer Inspire, Dealer.com/Cox, CDK Global, DealerSocket,
+# EDealer, Sincro, and common generic patterns.
 CANDIDATE_CARD_SELECTORS = [
+    # Data-attribute driven (most reliable)
     '[data-vehicle]',
     '[data-vehicle-details]',
+    '[data-vehicle-id]',
+    '[data-listing-id]',
+    '[data-vin]',
+    # Specific platform classes
     '.vehicle-card',
     '.inventory-listing-item',
     '.result-wrap',
+    '.srp-list-item',
+    '.vehicle-item',
+    '.listing-item',
+    '.inventory-item',
+    '.inv-item',
+    # Cox Automotive / Dealer.com
+    '.ddc-item-info-wrapper',
+    '[class*="ddc-item"]',
+    # CDK Global
+    '.inventory-listing',
+    '[class*="inventory-listing"]',
+    # DealerSocket / Sincro
+    '.vehicle-listing-item',
+    '[class*="VehicleCard"]',
+    '[class*="vehicle-result"]',
+    # Broad class substring matches
     '[class*="vehicle-card"]',
     '[class*="inventory-item"]',
     '[class*="vehicle-listing"]',
+    '[class*="listing-item"]',
+    '[class*="vehicle-tile"]',
+    '[class*="car-card"]',
+    # Element + class combinations
     'article[class*="vehicle"]',
+    'article[class*="card"]',
     'li[class*="vehicle"]',
-    '.srp-list-item',
-    '.vehicle-item',
-    '[data-listing-id]',
+    'li[class*="inventory"]',
+    'div[class*="vehicle-card"]',
 ]
 
 
@@ -43,7 +70,7 @@ async def _find_first_card(page: Page):
         try:
             locator = page.locator(selector)
             count = await locator.count()
-            if count > 0:
+            if count >= 2:  # Require at least 2 to avoid nav/header false positives
                 print(f'Scraper: found {count} cards with selector: {selector}')
                 return locator.first, selector
         except Exception:
@@ -51,9 +78,23 @@ async def _find_first_card(page: Page):
     return None, None
 
 
+async def _trigger_lazy_load(page: Page) -> None:
+    '''Scroll down and back up to trigger lazy-loaded content.'''
+    try:
+        await page.evaluate('''() => {
+            window.scrollTo(0, document.body.scrollHeight / 2);
+        }''')
+        await asyncio.sleep(1)
+        await page.evaluate('() => { window.scrollTo(0, document.body.scrollHeight); }')
+        await asyncio.sleep(1)
+        await page.evaluate('() => { window.scrollTo(0, 0); }')
+    except Exception:
+        pass
+
+
 async def capture_platform_samples(
     inventory_url: str,
-    timeout_ms: int = 25000,
+    timeout_ms: int = 30000,
 ) -> dict:
     '''
     Navigate to dealership inventory page, find first vehicle card,
@@ -72,7 +113,17 @@ async def capture_platform_samples(
             )
 
             print(f'Scraper: navigating to {inventory_url}')
-            await page.goto(inventory_url, wait_until='networkidle', timeout=timeout_ms)
+
+            # Try networkidle first; fall back to load for SPAs that never go idle
+            try:
+                await page.goto(inventory_url, wait_until='networkidle', timeout=timeout_ms)
+            except Exception:
+                print('Scraper: networkidle timed out, retrying with load event')
+                await page.goto(inventory_url, wait_until='load', timeout=timeout_ms)
+
+            # Initial wait + scroll to trigger lazy-loaded cards
+            await asyncio.sleep(3)
+            await _trigger_lazy_load(page)
             await asyncio.sleep(2)
 
             card_locator, matched_selector = await _find_first_card(page)
@@ -88,13 +139,19 @@ async def capture_platform_samples(
             print(f'Scraper: captured card HTML ({len(card_html)} chars)')
 
             detail_href = await card_locator.evaluate('''el => {
-                const patterns = ['/used/', '/inventory/', '/vehicle', '/vdp/', '/cars/'];
+                const patterns = ['/used/', '/inventory/', '/vehicle', '/vdp/', '/cars/', '/used-'];
                 for (const pattern of patterns) {
                     const a = el.querySelector('a[href*="' + pattern + '"]');
                     if (a && a.href) return a.href;
                 }
-                const anyA = el.querySelector('a[href]');
-                return anyA ? anyA.href : null;
+                // Fallback: any link in the card that isn't a nav/utility link
+                const links = Array.from(el.querySelectorAll('a[href]'));
+                const detail = links.find(a =>
+                    a.href.includes(window.location.hostname) &&
+                    !a.href.includes('#') &&
+                    a.href !== window.location.href
+                );
+                return detail ? detail.href : null;
             }''')
 
             detail_html = None
@@ -106,27 +163,35 @@ async def capture_platform_samples(
 
                 try:
                     print(f'Scraper: navigating to detail page {detail_href}')
-                    await detail_page.goto(
-                        detail_href, wait_until='networkidle', timeout=timeout_ms
-                    )
-                    await asyncio.sleep(2)
+                    try:
+                        await detail_page.goto(
+                            detail_href, wait_until='networkidle', timeout=timeout_ms
+                        )
+                    except Exception:
+                        await detail_page.goto(
+                            detail_href, wait_until='load', timeout=timeout_ms
+                        )
+                    await asyncio.sleep(3)
 
                     price_selectors = [
                         '#price-box', '.vdp-price-box', '.price-box',
                         '.pricing-detail', '[class*="pricing"]',
                         '.vehicle-pricing', '.price-section',
-                        'dl.pricing-detail',
+                        'dl.pricing-detail', '[class*="price-block"]',
+                        '[class*="priceBlock"]', '[class*="price-box"]',
                     ]
                     spec_selectors = [
                         '.basic-info-component', '.vehicle-details',
                         '.specs-table', '[class*="spec"]',
-                        'dl.dl-horizontal',
-                        '.vehicle-info', '.vehicle-specs',
+                        'dl.dl-horizontal', '.vehicle-info',
+                        '.vehicle-specs', '[class*="vehicle-info"]',
+                        '[class*="features"]', '.attributes',
                     ]
                     gallery_selectors = [
                         '.vdp-gallery', '.media-gallery',
                         '[class*="gallery"]', '.vehicle-photos',
-                        '.photo-gallery',
+                        '.photo-gallery', '[class*="photo-viewer"]',
+                        '[class*="image-viewer"]', '[class*="slider"]',
                     ]
 
                     fragments = []
