@@ -1,5 +1,5 @@
 from __future__ import annotations
-from datetime import datetime, timezone
+from datetime import datetime
 from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
 from sqlmodel import select
@@ -172,7 +172,7 @@ async def approve_config(
         raise HTTPException(status_code=404, detail='Config not found')
 
     platform.status = 'active'
-    platform.reviewed_at = datetime.now(timezone.utc)
+    platform.reviewed_at = datetime.utcnow()
     platform.reviewed_by = current_user.email
 
     session.add(platform)
@@ -197,7 +197,7 @@ async def reject_config(
         raise HTTPException(status_code=404, detail='Config not found')
 
     platform.status = 'rejected'
-    platform.reviewed_at = datetime.now(timezone.utc)
+    platform.reviewed_at = datetime.utcnow()
     platform.reviewed_by = current_user.email
 
     session.add(platform)
