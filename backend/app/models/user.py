@@ -21,6 +21,7 @@ class UserBase(SQLModel):
     custom_tagline_es: Optional[str] = Field(default=None, max_length=200)
 
     # ── Multi-user / billing fields ───────────────────────────
+    dealership_url: Optional[str] = Field(default=None, max_length=500)
     dealership_id: Optional[int] = Field(default=None, foreign_key='dealerships.id')
     role: str = Field(default='independent', max_length=50)  # independent | salesperson | manager | admin
     subscription_status: str = Field(default="trial", max_length=50)  # trial | active | cancelled | past_due
@@ -48,6 +49,7 @@ class UserCreate(SQLModel):
     full_name: str
     dealership_name: str
     password: str
+    dealership_url: Optional[str] = None
 
 
 # ── API: Response shape ───────────────────────────────────────
@@ -68,6 +70,7 @@ class UserRead(SQLModel):
     preferred_language: str
     elevenlabs_voice_id_es: Optional[str]
     custom_tagline_es: Optional[str]
+    dealership_url: Optional[str]
     created_at: datetime
 
 
@@ -81,3 +84,4 @@ class UserUpdate(SQLModel):
     preferred_language: Optional[str] = None
     elevenlabs_voice_id_es: Optional[str] = None
     custom_tagline_es: Optional[str] = None
+    dealership_url: Optional[str] = None

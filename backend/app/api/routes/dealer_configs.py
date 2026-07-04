@@ -1,7 +1,8 @@
 from __future__ import annotations
 from datetime import datetime
-from typing import Annotated
+from typing import Annotated, Optional
 from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
+from pydantic import BaseModel
 from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
@@ -11,6 +12,7 @@ from app.models.user import User
 from app.models.dealership import Dealership
 from app.models.dealer_platform import DealerPlatform
 from app.services.config_generator.generator import generate_config_for_dealership
+from app.services.config_generator.claude_generator import generate_config
 
 router = APIRouter(prefix='/dealer-configs', tags=['dealer-configs'])
 
@@ -118,6 +120,74 @@ async def list_pending_configs(
             }
             for p in platforms
         ],
+    }
+
+
+class GenerateFromHtmlRequest(BaseModel):
+    card_html: str
+    detail_html: Optional[str] = None
+    source_url: str
+
+
+@router.post('/generate-from-html')
+async def generate_config_from_html(
+    payload: GenerateFromHtmlRequest,
+    current_user: Annotated[User, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_session)],
+):
+    '''
+    Extension-side config generation — extension scrapes HTML from user's
+    browser (residential IP, no bot blocking) and sends it here.
+    Claude generates the config; saved as pending_review.
+    '''
+    try:
+        config = await generate_config(payload.card_html, payload.detail_html)
+    except Exception as e:
+        raise HTTPException(status_code=422, detail=f'Config generation failed: {e}')
+
+    platform_slug = config.get('platform', 'unknown')
+
+    # Check if this user already has a pending/active config for this source domain
+    source_domain = (
+        payload.source_url
+        .replace('https://', '').replace('http://', '').replace('www.', '')
+        .split('/')[0]
+    )
+    existing = await session.exec(
+        select(DealerPlatform).where(
+            DealerPlatform.source_url.contains(source_domain),
+            DealerPlatform.status.in_(['pending_review', 'active']),
+        )
+    )
+    if existing.first():
+        raise HTTPException(
+            status_code=409,
+            detail='A config for this domain already exists (pending or active).'
+        )
+
+    platform = DealerPlatform(
+        name=f'Auto-generated: {platform_slug}',
+        platform_slug=platform_slug,
+        config_json=config,
+        status='pending_review',
+        source_url=payload.source_url,
+        notes='\n'.join(config.get('notes_for_human_review', [])),
+        generation_warnings=config.get('_generation_warnings', []),
+        input_tokens=config.get('_usage', {}).get('input_tokens'),
+        output_tokens=config.get('_usage', {}).get('output_tokens'),
+    )
+    session.add(platform)
+    await session.commit()
+    await session.refresh(platform)
+
+    print(f'Config generated from HTML: DealerPlatform id={platform.id} for {payload.source_url}')
+
+    return {
+        'platform_id': platform.id,
+        'status': 'pending_review',
+        'platform': platform_slug,
+        'warnings': config.get('_generation_warnings', []),
+        'message': 'Config generated and saved for review.',
     }
 
 

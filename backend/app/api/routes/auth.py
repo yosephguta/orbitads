@@ -50,6 +50,18 @@ async def register(
             detail="An account with this email already exists.",
         )
 
+    # Normalize dealership_url — strip protocol and trailing slash, store bare domain/path
+    dealership_url = None
+    if payload.dealership_url:
+        dealership_url = (
+            payload.dealership_url
+            .strip()
+            .rstrip('/')
+            .replace('https://', '')
+            .replace('http://', '')
+            .replace('www.', '')
+        )
+
     token = str(uuid.uuid4())
     user = User(
         email=payload.email,
@@ -62,6 +74,7 @@ async def register(
         is_verified=False,
         verification_token=token,
         elevenlabs_voice_id="Gubgw9l4dtIoQA9YZHgx",  # Brian — default voice
+        dealership_url=dealership_url,
     )
 
     session.add(user)
