@@ -132,13 +132,13 @@ class GenerateFromHtmlRequest(BaseModel):
 @router.post('/generate-from-html')
 async def generate_config_from_html(
     payload: GenerateFromHtmlRequest,
-    current_user: Annotated[User, Depends(get_current_user)],
     session: Annotated[AsyncSession, Depends(get_session)],
 ):
     '''
-    Extension-side config generation — extension scrapes HTML from user's
-    browser (residential IP, no bot blocking) and sends it here.
-    Claude generates the config; saved as pending_review.
+    Extension-side config generation — no auth required.
+    Extension scrapes HTML from user's browser (residential IP, no bot blocking).
+    Claude generates config saved as pending_review for manual admin approval.
+    No auth needed: configs go to pending_review only, no sensitive data exposed.
     '''
     try:
         config = await generate_config(payload.card_html, payload.detail_html)
