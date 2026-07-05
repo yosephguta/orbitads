@@ -37,9 +37,9 @@ Schema:
     "button_injection": "<CSS selector for good Import button injection point>"
   },
   "detail_page": {
-    "sale_price":       "<CSS selector, final/sale price only — never MSRP>",
-    "retail_price":     "<CSS selector for MSRP if shown separately, else null>",
-    "processing_fee":   "<CSS selector for doc/processing fee line, else null>",
+    "sale_price":       "<CSS selector for the FINAL ADVERTISED PRICE — must include all mandatory dealer fees (processing fee, doc fee, dealer fee). If the site shows a base price + separate processing/doc fee, use the combined total. Labels to look for: 'Internet Price', 'Our Price', 'Online Price', 'Final Price', '[Dealer Name] Price'. NEVER use MSRP, Retail Value, or a pre-fee base price.>",
+    "retail_price":     "<CSS selector for MSRP/Retail Value if shown separately, else null>",
+    "processing_fee":   "<CSS selector for the processing/doc/dealer fee line if shown separately, else null>",
     "exterior_color":   "<CSS selector>",
     "interior_color":   "<CSS selector>",
     "body_style":       "<CSS selector, or null>",
@@ -62,9 +62,16 @@ Schema:
 }
 
 Critical rules:
-- For price/sale_price: look for labels like "Our Price", "Internet Price",
-  "Final Price", "Sale Price", "Asking Price". NEVER select MSRP, Retail,
-  or "Starting at" price — this is an FTC compliance requirement.
+- For price/sale_price on inventory cards and detail pages: ALWAYS use the FINAL
+  ADVERTISED price that includes all mandatory dealer fees (processing fee, doc fee,
+  dealer fee). Dealers are legally required to advertise the total price including
+  mandatory fees. Look for labels like "Internet Price", "Our Price", "Online Price",
+  "[Dealer Name] Price", "Final Price". If you see a base "Sale Price" AND a separate
+  "Processing Fee" or "Doc Fee", the sale_price selector should target whichever
+  element shows their SUM (often labeled "Total" or "[Dealer] Price"). The processing
+  fee amount varies by state and dealer — never hardcode a dollar amount.
+  NEVER select MSRP, Retail Value, or a pre-fee base price — this is an FTC
+  compliance requirement.
 - If a data-* attribute contains JSON with vehicle fields, set data_attribute
   and still fill in CSS selectors as fallback.
 - Prefer stable class/data-testid selectors over positional selectors.
