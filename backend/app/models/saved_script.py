@@ -1,5 +1,5 @@
 from __future__ import annotations
-from datetime import datetime, timezone
+from datetime import datetime
 from typing import Optional
 from sqlmodel import SQLModel, Field, Column
 import sqlalchemy as sa
@@ -13,7 +13,5 @@ class SavedScript(SQLModel, table=True):
     name:         str           = Field(max_length=100)
     prompt_text:  str           = Field(sa_column=Column(sa.Text))
     use_count:    int           = Field(default=0)
-    created_at:   datetime      = Field(
-        default_factory=lambda: datetime.now(timezone.utc)
-    )
+    created_at:   datetime      = Field(default_factory=datetime.utcnow)
     last_used_at: Optional[datetime] = Field(default=None)

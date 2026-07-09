@@ -1,5 +1,5 @@
 from __future__ import annotations
-from datetime import datetime, timezone
+from datetime import datetime
 from typing import Annotated, Optional
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
@@ -103,7 +103,7 @@ async def mark_script_used(
     if not script or script.user_id != current_user.id:
         raise HTTPException(status_code=404, detail='Script not found')
     script.use_count   += 1
-    script.last_used_at = datetime.now(timezone.utc)
+    script.last_used_at = datetime.utcnow()
     session.add(script)
     await session.commit()
     return {'use_count': script.use_count}
