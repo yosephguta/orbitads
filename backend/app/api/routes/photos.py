@@ -55,10 +55,11 @@ async def classify_photos(
     # Limit to 30 photos max to control cost
     photos_to_classify = payload.photo_urls[:30]
 
-    # Classify all photos concurrently
+    # Classify all photos concurrently — must match the frontend cap (30)
+    # so exterior photos at positions 20-29 aren't silently dropped
     classified = await classify_photos_batch(
         photo_urls=photos_to_classify,
-        max_photos=20,
+        max_photos=30,
         concurrency=3,
     )
 

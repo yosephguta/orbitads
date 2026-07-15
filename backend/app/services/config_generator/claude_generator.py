@@ -79,6 +79,85 @@ Critical rules:
 - Output valid JSON only — no exceptions.'''
 
 
+async def generate_config_with_hints(
+    detail_html: str | None,
+    known_selectors: dict,
+    source_url: str,
+    for_new_cars: bool = False,
+) -> dict:
+    '''
+    Generate config with pre-seeded selectors confirmed by user interaction.
+    Claude only fills in what we don't already know.
+    '''
+    settings = get_settings()
+    client   = AsyncAnthropic(api_key=settings.anthropic_api_key)
+
+    car_type = 'NEW car' if for_new_cars else 'USED car'
+
+    known_section = ''
+    if known_selectors:
+        known_section = f'''
+ALREADY CONFIRMED BY USER INTERACTION — do NOT change these values:
+{json.dumps(known_selectors, indent=2)}
+
+Only fill in the fields NOT listed above. For fields listed above, copy the
+provided values exactly into the appropriate schema fields.
+'''
+
+    price_context = ''
+    if known_selectors.get('sale_price_label'):
+        price_context = f'''
+The user confirmed their advertised price label is: "{known_selectors.get("sale_price_label")}"
+Value example: {known_selectors.get("sale_price_value")}
+Use the CSS selector that targets this element for detail_page.sale_price.
+'''
+
+    user_content = f'''Source URL: {source_url}
+This is a {car_type} inventory page.
+
+{known_section}
+{price_context}
+DETAIL PAGE HTML FRAGMENTS:
+{detail_html or "(not available)"}
+
+Output the full config JSON. For fields already confirmed above, use those values exactly.
+For missing fields, infer from the HTML. Set unknown fields to null.'''
+
+    response = await client.messages.create(
+        model=MODEL,
+        max_tokens=1500,
+        system=SYSTEM_PROMPT,
+        messages=[{'role': 'user', 'content': user_content}],
+    )
+
+    raw = ''.join(b.text for b in response.content if b.type == 'text')
+    raw = re.sub(r'^```json\s*|\s*```$', '', raw.strip())
+
+    try:
+        config = json.loads(raw)
+    except json.JSONDecodeError as e:
+        raise RuntimeError(f'Claude returned invalid JSON: {e}')
+
+    # Overlay confirmed selectors — user interaction takes absolute priority
+    if known_selectors.get('vehicle_cards'):
+        config.setdefault('inventory', {})['vehicle_cards'] = known_selectors['vehicle_cards']
+    if known_selectors.get('sale_price_selector'):
+        config.setdefault('detail_page', {})['sale_price'] = known_selectors['sale_price_selector']
+
+    warnings = []
+    if not config.get('inventory', {}).get('vehicle_cards'):
+        warnings.append('vehicle_cards selector missing')
+    if not config.get('sold_indicators'):
+        warnings.append('sold_indicators empty — verify manually on a sold vehicle page')
+
+    config['_generation_warnings'] = warnings
+    config['_usage'] = {
+        'input_tokens':  response.usage.input_tokens,
+        'output_tokens': response.usage.output_tokens,
+    }
+    return config
+
+
 async def generate_config(card_html: str, detail_html: str | None) -> dict:
     settings = get_settings()
     client = AsyncAnthropic(api_key=settings.anthropic_api_key)

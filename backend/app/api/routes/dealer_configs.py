@@ -12,7 +12,7 @@ from app.models.user import User
 from app.models.dealership import Dealership
 from app.models.dealer_platform import DealerPlatform
 from app.services.config_generator.generator import generate_config_for_dealership
-from app.services.config_generator.claude_generator import generate_config
+from app.services.config_generator.claude_generator import generate_config, generate_config_with_hints
 
 router = APIRouter(prefix='/dealer-configs', tags=['dealer-configs'])
 
@@ -124,9 +124,14 @@ async def list_pending_configs(
 
 
 class GenerateFromHtmlRequest(BaseModel):
-    card_html: str
-    detail_html: Optional[str] = None
-    source_url: str
+    source_url:              str
+    card_html:               Optional[str] = None
+    detail_html:             Optional[str] = None
+    card_selector:           Optional[str] = None
+    selected_price:          Optional[dict] = None
+    exterior_photo_selector: Optional[str] = None
+    interior_photo_selector: Optional[str] = None
+    for_new_cars:            bool = False
 
 
 @router.post('/generate-from-html')
@@ -135,35 +140,67 @@ async def generate_config_from_html(
     session: Annotated[AsyncSession, Depends(get_session)],
 ):
     '''
-    Extension-side config generation — no auth required.
-    Extension scrapes HTML from user's browser (residential IP, no bot blocking).
-    Claude generates config saved as pending_review for manual admin approval.
-    No auth needed: configs go to pending_review only, no sensitive data exposed.
+    Extension-side config generation. Claude generates a config saved as
+    pending_review for manual admin approval. When card_selector / selected_price
+    are provided (new interactive onboarding), those values are seeded directly
+    into the config — Claude only fills in the remaining unknowns.
     '''
-    try:
-        config = await generate_config(payload.card_html, payload.detail_html)
-    except Exception as e:
-        raise HTTPException(status_code=422, detail=f'Config generation failed: {e}')
-
-    platform_slug = config.get('platform', 'unknown')
-
-    # Check if this user already has a pending/active config for this source domain
     source_domain = (
         payload.source_url
         .replace('https://', '').replace('http://', '').replace('www.', '')
         .split('/')[0]
     )
-    existing = await session.exec(
+
+    # Block if an active config already exists — return it so extension can use it immediately
+    existing_active_result = await session.exec(
         select(DealerPlatform).where(
             DealerPlatform.source_url.contains(source_domain),
-            DealerPlatform.status.in_(['pending_review', 'active']),
+            DealerPlatform.status == 'active',
         )
     )
-    if existing.first():
+    existing_active = existing_active_result.first()
+    if existing_active:
         raise HTTPException(
             status_code=409,
-            detail='A config for this domain already exists (pending or active).'
+            detail={
+                'message': 'An active config for this domain already exists.',
+                'config_id': existing_active.id,
+                'config': existing_active.config_json,
+            }
         )
+
+    # Build known-selectors dict from user interaction data
+    known_selectors = {}
+    if payload.card_selector:
+        known_selectors['vehicle_cards'] = payload.card_selector
+    if payload.selected_price:
+        known_selectors['sale_price_label']    = payload.selected_price.get('label')
+        known_selectors['sale_price_value']    = payload.selected_price.get('value')
+        known_selectors['sale_price_selector'] = payload.selected_price.get('selector')
+    if payload.exterior_photo_selector:
+        known_selectors['exterior_photo_selector'] = payload.exterior_photo_selector
+    if payload.interior_photo_selector:
+        known_selectors['interior_photo_selector'] = payload.interior_photo_selector
+
+    try:
+        if known_selectors:
+            config = await generate_config_with_hints(
+                detail_html=payload.detail_html,
+                known_selectors=known_selectors,
+                source_url=payload.source_url,
+                for_new_cars=payload.for_new_cars,
+            )
+        else:
+            config = await generate_config(payload.card_html or '', payload.detail_html)
+    except Exception as e:
+        raise HTTPException(status_code=422, detail=f'Config generation failed: {e}')
+
+    platform_slug = config.get('platform', 'unknown')
+    notes_lines   = list(config.get('notes_for_human_review', []))
+    if payload.card_selector:
+        notes_lines.insert(0, f'[Interactive] card_selector confirmed by user click: {payload.card_selector}')
+    if payload.selected_price:
+        notes_lines.insert(0, f'[Interactive] price confirmed by user: {payload.selected_price.get("label")} = {payload.selected_price.get("value")}')
 
     platform = DealerPlatform(
         name=f'Auto-generated: {platform_slug}',
@@ -171,7 +208,7 @@ async def generate_config_from_html(
         config_json=config,
         status='pending_review',
         source_url=payload.source_url,
-        notes='\n'.join(config.get('notes_for_human_review', [])),
+        notes='\n'.join(notes_lines),
         generation_warnings=config.get('_generation_warnings', []),
         input_tokens=config.get('_usage', {}).get('input_tokens'),
         output_tokens=config.get('_usage', {}).get('output_tokens'),
@@ -183,11 +220,10 @@ async def generate_config_from_html(
     print(f'Config generated from HTML: DealerPlatform id={platform.id} for {payload.source_url}')
 
     return {
-        'platform_id': platform.id,
-        'status': 'pending_review',
-        'platform': platform_slug,
-        'warnings': config.get('_generation_warnings', []),
-        'message': 'Config generated and saved for review.',
+        'config_id': platform.id,
+        'config':    config,
+        'status':    'pending_review',
+        'warnings':  config.get('_generation_warnings', []),
     }
 
 
@@ -273,3 +309,17 @@ async def reject_config(
     session.add(platform)
     await session.commit()
     return {'message': f'Config {platform_id} rejected'}
+
+
+@router.post('/{platform_id}/flag-manual')
+async def flag_for_manual_review(
+    platform_id: int,
+    session: Annotated[AsyncSession, Depends(get_session)],
+):
+    platform = await session.get(DealerPlatform, platform_id)
+    if platform:
+        platform.notes = (platform.notes or '') + \
+            '\n⚠️ FLAGGED: User reported incorrect scraping — priority manual review needed'
+        session.add(platform)
+        await session.commit()
+    return {'flagged': True}
