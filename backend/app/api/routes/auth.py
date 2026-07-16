@@ -43,6 +43,12 @@ async def register(
     payload: UserCreate,
     session: Annotated[SQLModelAsyncSession, Depends(get_session)],
 ):
+    if not payload.terms_agreed:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="You must agree to the Terms of Service to create an account.",
+        )
+
     result = await session.exec(select(User).where(User.email == payload.email))
     if result.first():
         raise HTTPException(
@@ -75,6 +81,7 @@ async def register(
         verification_token=token,
         elevenlabs_voice_id="Gubgw9l4dtIoQA9YZHgx",  # Brian — default voice
         dealership_url=dealership_url,
+        terms_agreed_at=datetime.utcnow(),
     )
 
     session.add(user)

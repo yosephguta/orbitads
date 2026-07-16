@@ -28,6 +28,7 @@ class UserBase(SQLModel):
     stripe_customer_id: Optional[str] = Field(default=None, max_length=255)
     stripe_subscription_id: Optional[str] = Field(default=None, max_length=255)
     trial_ends_at: Optional[datetime] = Field(default=None)
+    terms_agreed_at: Optional[datetime] = Field(default=None)
 
 
 # ── Database table ────────────────────────────────────────────
@@ -50,6 +51,7 @@ class UserCreate(SQLModel):
     dealership_name: str
     password: str
     dealership_url: Optional[str] = None
+    terms_agreed: bool = False
 
 
 # ── API: Response shape ───────────────────────────────────────
