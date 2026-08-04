@@ -8,6 +8,8 @@ from sqlmodel import Field, SQLModel
 class UserBase(SQLModel):
     email: str = Field(unique=True, index=True, max_length=255)
     full_name: str = Field(max_length=255)
+    first_name: Optional[str] = Field(default=None, max_length=100)
+    last_name: Optional[str] = Field(default=None, max_length=100)
     dealership_name: str = Field(max_length=255, default="")
     is_active: bool = Field(default=True)
     is_verified: bool = Field(default=False)
