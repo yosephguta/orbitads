@@ -79,6 +79,7 @@ class UserRead(SQLModel):
     elevenlabs_voice_id_es: Optional[str]
     custom_tagline_es: Optional[str]
     dealership_url: Optional[str]
+    terms_agreed_at: Optional[datetime]
     created_at: datetime
 
 
