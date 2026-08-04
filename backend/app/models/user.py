@@ -48,10 +48,12 @@ class User(UserBase, table=True):
 
 # ── API: Registration input ───────────────────────────────────
 class UserCreate(SQLModel):
+    first_name: str
+    last_name: str
     email: str
-    full_name: str
-    dealership_name: str
     password: str
+    phone_number: Optional[str] = None
+    dealership_name: Optional[str] = None
     dealership_url: Optional[str] = None
     terms_agreed: bool = False
 
@@ -61,6 +63,8 @@ class UserRead(SQLModel):
     id: int
     email: str
     full_name: str
+    first_name: Optional[str]
+    last_name: Optional[str]
     dealership_name: str
     is_active: bool
     is_verified: bool

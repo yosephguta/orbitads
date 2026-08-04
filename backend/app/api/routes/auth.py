@@ -68,18 +68,26 @@ async def register(
             .replace('www.', '')
         )
 
+    first_name = payload.first_name.strip()
+    last_name = payload.last_name.strip()
+    full_name = f'{first_name} {last_name}'.strip()
+
     token = str(uuid.uuid4())
     user = User(
-        email=payload.email,
-        full_name=payload.full_name,
-        dealership_name=payload.dealership_name,
+        email=payload.email.lower().strip(),
+        first_name=first_name,
+        last_name=last_name,
+        full_name=full_name,
+        dealership_name=payload.dealership_name or '',
         hashed_password=hash_password(payload.password),
+        phone_number=payload.phone_number or None,
         role="salesperson",
         subscription_status="trial",
         trial_ends_at=datetime.utcnow() + timedelta(days=14),
         is_verified=False,
         verification_token=token,
         elevenlabs_voice_id="Gubgw9l4dtIoQA9YZHgx",  # Brian — default voice
+        elevenlabs_voice_id_es="zDMHo7CPscBTgfDtPOWl",  # Claus — default Spanish voice
         dealership_url=dealership_url,
         terms_agreed_at=datetime.utcnow(),
     )
