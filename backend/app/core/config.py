@@ -61,9 +61,9 @@ class Settings(BaseSettings):
     # ── Stripe ────────────────────────────────────────────────────
     stripe_secret_key: str
     stripe_webhook_secret: str
-    stripe_price_starter: str
-    stripe_price_pro: str
-    stripe_price_elite: str
+    stripe_price_pro: str = ''         # DealersOrbit Pro — price_1Tp7icIRLDxVTJpOSX7qGj9E
+    stripe_price_elite: str = ''       # DealersOrbit Elite — price_1TbjrKIRLDxVTJpOfnhZjm80
+    stripe_price_dealership: str = ''  # DealersOrbit Dealership — price_1TbjojIRLDxVTJpObCuDLuho
 
     # ── CORS ──────────────────────────────────────────────────
     # Which frontend URLs are allowed to talk to this backend

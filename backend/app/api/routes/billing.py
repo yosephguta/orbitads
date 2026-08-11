@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import stripe
 from typing import Annotated, Optional
+from pydantic import BaseModel
 from fastapi import APIRouter, Depends, HTTPException, Request, Header
 from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
@@ -18,9 +19,9 @@ router = APIRouter(prefix="/billing", tags=["billing"])
 
 # ── Price map ─────────────────────────────────────────────────
 PRICE_MAP = {
-    "starter": settings.stripe_price_starter,
-    "pro":     settings.stripe_price_pro,
-    "elite":   settings.stripe_price_elite,
+    "pro":        settings.stripe_price_pro,
+    "elite":      settings.stripe_price_elite,
+    "dealership": settings.stripe_price_dealership,
 }
 
 
@@ -29,15 +30,18 @@ PRICE_MAP = {
 async def create_checkout_session(
     plan: str,
     current_user: Annotated[User, Depends(get_current_user)],
+    session: AsyncSession = Depends(get_session),
 ):
     """
     Creates a Stripe Checkout session for the given plan.
-    Frontend redirects user to session.url to complete payment.
+    Frontend redirects user to the returned url to complete payment.
     """
     if plan not in PRICE_MAP:
-        raise HTTPException(status_code=400, detail=f"Invalid plan: {plan}. Choose starter, pro, or elite.")
+        raise HTTPException(status_code=400, detail=f"Invalid plan: {plan}. Choose pro, elite, or dealership.")
 
-    # Create or retrieve Stripe customer
+    # Create or retrieve Stripe customer. Persist a newly-created customer id
+    # immediately so an abandoned checkout doesn't spawn duplicate customers
+    # on the next attempt.
     if not current_user.stripe_customer_id:
         customer = stripe.Customer.create(
             email=current_user.email,
@@ -45,10 +49,13 @@ async def create_checkout_session(
             metadata={"user_id": current_user.id, "dealership": current_user.dealership_name},
         )
         customer_id = customer.id
+        current_user.stripe_customer_id = customer_id
+        session.add(current_user)
+        await session.commit()
     else:
         customer_id = current_user.stripe_customer_id
 
-    session = stripe.checkout.Session.create(
+    checkout = stripe.checkout.Session.create(
         customer=customer_id,
         payment_method_types=["card"],
         line_items=[{
@@ -61,12 +68,13 @@ async def create_checkout_session(
             # before subscribing, so charge immediately on checkout.
             "metadata": {"user_id": str(current_user.id), "plan": plan},
         },
-        success_url="https://dealersorbit.com/orbitads/?checkout=success",
-        cancel_url="https://dealersorbit.com/orbitads/?checkout=cancelled",
+        success_url="https://dealersorbit.com/?upgraded=true",
+        cancel_url="https://dealersorbit.com/#pricing",
         metadata={"user_id": str(current_user.id), "plan": plan},
     )
 
-    return {"checkout_url": session.url, "session_id": session.id}
+    # `url` is the key the extension reads; keep checkout_url/session_id for back-compat.
+    return {"url": checkout.url, "plan": plan, "checkout_url": checkout.url, "session_id": checkout.id}
 
 
 # ── Customer portal ───────────────────────────────────────────
@@ -138,7 +146,7 @@ async def _handle_checkout_complete(session_obj: dict, db):
     user.stripe_customer_id = customer_id
     user.stripe_subscription_id = subscription_id
     user.subscription_status = "active"  # charged immediately, no Stripe trial
-    user.role = plan  # starter | pro | elite
+    user.purchased_plan = plan  # pro | elite | dealership
     db.add(user)
     await db.commit()
 
@@ -187,3 +195,38 @@ async def _handle_payment_failed(invoice: dict, db):
     user.subscription_status = "past_due"
     db.add(user)
     await db.commit()
+
+
+# ── Contact Sales ─────────────────────────────────────────────
+class ContactSalesRequest(BaseModel):
+    name: str
+    email: str
+    phone: Optional[str] = None
+    dealership_name: Optional[str] = None
+    message: Optional[str] = None
+
+
+@router.post("/contact-sales")
+async def contact_sales(payload: ContactSalesRequest):
+    """Website 'Contact Sales' form — emails the sales team via Resend."""
+    try:
+        import resend
+        resend.api_key = settings.resend_api_key
+
+        resend.Emails.send({
+            'from':    'DealersOrbit <notifications@mail.dealersorbit.com>',
+            'to':      ['mail@dealersorbit.com'],
+            'subject': f'📞 Contact Sales — {payload.dealership_name or payload.name}',
+            'html':    f'''
+                <h2>New Contact Sales Request</h2>
+                <p><strong>Name:</strong> {payload.name}</p>
+                <p><strong>Email:</strong> {payload.email}</p>
+                <p><strong>Phone:</strong> {payload.phone or 'Not provided'}</p>
+                <p><strong>Dealership:</strong> {payload.dealership_name or 'Not provided'}</p>
+                <p><strong>Message:</strong> {payload.message or 'None'}</p>
+            ''',
+        })
+        return {'success': True}
+    except Exception as e:
+        print(f'Contact sales email failed: {e}')
+        raise HTTPException(status_code=500, detail='Failed to send message. Please try again.')

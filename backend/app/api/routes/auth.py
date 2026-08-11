@@ -72,6 +72,8 @@ async def register(
     last_name = payload.last_name.strip()
     full_name = f'{first_name} {last_name}'.strip()
 
+    signup_plan = payload.signup_plan if payload.signup_plan in ('individual', 'dealership') else 'individual'
+
     token = str(uuid.uuid4())
     user = User(
         email=payload.email.lower().strip(),
@@ -83,6 +85,7 @@ async def register(
         phone_number=payload.phone_number or None,
         role="salesperson",
         subscription_status="trial",
+        signup_plan=signup_plan,
         trial_ends_at=datetime.utcnow() + timedelta(days=7),
         is_verified=False,
         verification_token=token,
@@ -97,6 +100,31 @@ async def register(
     await session.refresh(user)
 
     send_verification_email(to=user.email, full_name=user.full_name, token=token)
+
+    # Notify sales team of dealership-plan trial signups so they can reach out
+    if signup_plan == 'dealership':
+        try:
+            import resend
+            settings = get_settings()
+            resend.api_key = settings.resend_api_key
+
+            resend.Emails.send({
+                'from':    'DealersOrbit <notifications@mail.dealersorbit.com>',
+                'to':      ['mail@dealersorbit.com'],
+                'subject': f'🏢 New Dealership Signup — {user.dealership_name or user.email}',
+                'html':    f'''
+                    <h2>New Dealership Plan Trial Signup</h2>
+                    <p><strong>Name:</strong> {user.full_name}</p>
+                    <p><strong>Email:</strong> {user.email}</p>
+                    <p><strong>Phone:</strong> {user.phone_number or 'Not provided'}</p>
+                    <p><strong>Dealership:</strong> {user.dealership_name or 'Not provided'}</p>
+                    <p><strong>Dealership URL:</strong> {user.dealership_url or 'Not provided'}</p>
+                    <p>They're on a 7-day trial (5 videos) with full Elite features.</p>
+                    <p><strong>Action:</strong> Reach out to discuss multi-rooftop / team setup.</p>
+                ''',
+            })
+        except Exception as e:
+            print(f'Failed to send dealership signup notification: {e}')
 
     return {"message": "Account created! Please check your email to verify your account."}
 

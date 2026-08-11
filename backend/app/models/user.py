@@ -27,6 +27,8 @@ class UserBase(SQLModel):
     dealership_id: Optional[int] = Field(default=None, foreign_key='dealerships.id')
     role: str = Field(default='independent', max_length=50)  # independent | salesperson | manager | admin
     subscription_status: str = Field(default="trial", max_length=50)  # trial | active | cancelled | past_due
+    signup_plan: str = Field(default='individual', max_length=20)  # individual | dealership
+    purchased_plan: Optional[str] = Field(default=None, max_length=20)  # pro | elite | dealership | None (trial/unpaid)
     stripe_customer_id: Optional[str] = Field(default=None, max_length=255)
     stripe_subscription_id: Optional[str] = Field(default=None, max_length=255)
     trial_ends_at: Optional[datetime] = Field(default=None)
@@ -64,6 +66,7 @@ class UserCreate(SQLModel):
     dealership_name: Optional[str] = None
     dealership_url: Optional[str] = None
     terms_agreed: bool = False
+    signup_plan: str = 'individual'  # individual | dealership
 
 
 # ── API: Response shape ───────────────────────────────────────
@@ -79,6 +82,8 @@ class UserRead(SQLModel):
     dealership_id: Optional[int]
     role: str
     subscription_status: str
+    signup_plan: str
+    purchased_plan: Optional[str]
     elevenlabs_voice_id: Optional[str]
     phone_number: Optional[str]
     trial_ends_at: Optional[datetime]
