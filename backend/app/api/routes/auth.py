@@ -83,7 +83,7 @@ async def register(
         phone_number=payload.phone_number or None,
         role="salesperson",
         subscription_status="trial",
-        trial_ends_at=datetime.utcnow() + timedelta(days=14),
+        trial_ends_at=datetime.utcnow() + timedelta(days=7),
         is_verified=False,
         verification_token=token,
         elevenlabs_voice_id="Gubgw9l4dtIoQA9YZHgx",  # Brian — default voice
@@ -324,6 +324,13 @@ async def update_me(
         current_user.custom_tagline = None
     if updates.get("custom_tagline_es") == "":
         current_user.custom_tagline_es = None
+    # Quick launch URLs — strip whitespace, empty → None
+    if payload.cars_com_url is not None:
+        current_user.cars_com_url = payload.cars_com_url.strip() or None
+    if payload.cargurus_url is not None:
+        current_user.cargurus_url = payload.cargurus_url.strip() or None
+    if payload.dealer_inventory_url is not None:
+        current_user.dealer_inventory_url = payload.dealer_inventory_url.strip() or None
     # Validate preferred_language
     if "preferred_language" in updates:
         if updates["preferred_language"] not in ("en", "es"):
@@ -345,4 +352,62 @@ async def update_me(
         **UserRead.model_validate(current_user).model_dump(),
         "dealership_required_tagline": dealership_required_tagline,
         "dealership_required_tagline_es": dealership_required_tagline_es,
+    }
+
+
+# ── Request dealer site configuration ─────────────────────────
+@router.post("/request-dealer-config")
+async def request_dealer_config(
+    current_user: Annotated[User, Depends(get_current_user)],
+    session: Annotated[SQLModelAsyncSession, Depends(get_session)],
+):
+    """Paid user requests manual dealer site configuration."""
+
+    # Must be on a paid plan
+    if current_user.subscription_status not in ("active",):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Dealer site configuration is available on paid plans.",
+        )
+
+    if not current_user.dealer_inventory_url:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Please save your dealer inventory URL first.",
+        )
+
+    # Mark as requested
+    current_user.dealer_config_requested = True
+    current_user.dealer_config_requested_at = datetime.utcnow()
+    session.add(current_user)
+    await session.commit()
+    await session.refresh(current_user)
+
+    # Send email notification via Resend
+    try:
+        import resend
+        settings = get_settings()
+        resend.api_key = settings.resend_api_key
+
+        resend.Emails.send({
+            'from':    'DealersOrbit <notifications@mail.dealersorbit.com>',
+            'to':      ['mail@dealersorbit.com'],
+            'subject': f'Dealer Config Request — {current_user.dealership_name or current_user.email}',
+            'html':    f'''
+                <h2>New Dealer Site Configuration Request</h2>
+                <p><strong>User:</strong> {current_user.full_name} ({current_user.email})</p>
+                <p><strong>Dealership:</strong> {current_user.dealership_name or "Not set"}</p>
+                <p><strong>Inventory URL:</strong> <a href="{current_user.dealer_inventory_url}">{current_user.dealer_inventory_url}</a></p>
+                <p><strong>Subscription:</strong> {current_user.subscription_status}</p>
+                <p><strong>Requested at:</strong> {current_user.dealer_config_requested_at}</p>
+                <hr>
+                <p>Log in to approve: <a href="https://api.dealersorbit.com/docs">Admin panel</a></p>
+            ''',
+        })
+    except Exception as e:
+        print(f'Failed to send config request email: {e}')
+
+    return {
+        'message': 'Configuration request submitted. Your dealer site will be configured within 24 hours.',
+        'requested_at': current_user.dealer_config_requested_at,
     }

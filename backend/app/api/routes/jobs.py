@@ -106,6 +106,33 @@ async def _run_pipeline(job_id: int, user_id: int):
         if not job or not user:
             return
 
+        # ── Trial limit check ─────────────────────────────────
+        if user.subscription_status == 'trial':
+            now = datetime.now(timezone.utc)
+            trial_end = user.trial_ends_at
+            if trial_end is None:
+                trial_end = now
+            elif trial_end.tzinfo is None:
+                trial_end = trial_end.replace(tzinfo=timezone.utc)
+
+            if now > trial_end:
+                await _update_job_safe(job_id,
+                    status        = JobStatus.FAILED,
+                    error_message = 'TRIAL_EXPIRED',
+                    completed_at  = datetime.utcnow(),
+                )
+                return
+
+            if user.trial_video_count >= 5:
+                await _update_job_safe(job_id,
+                    status        = JobStatus.FAILED,
+                    error_message = 'TRIAL_VIDEO_LIMIT',
+                    completed_at  = datetime.utcnow(),
+                )
+                return
+
+        user_subscription_status    = user.subscription_status
+
         job_vin                     = job.vin
         job_theme                   = job.theme
         job_video_type              = job.video_type
@@ -412,6 +439,16 @@ async def _run_pipeline(job_id: int, user_id: int):
         progress_pct=100,
         completed_at=datetime.utcnow(),
     )
+
+    # ── Increment trial video count ───────────────────────
+    if user_subscription_status == 'trial':
+        async with AsyncSessionLocal() as s:
+            u = await s.get(User, user_id)
+            if u:
+                u.trial_video_count += 1
+                s.add(u)
+                await s.commit()
+                print(f'Trial video count: {u.trial_video_count}/5')
 
 
 @webhook_router.get("/webhook/shotstack")

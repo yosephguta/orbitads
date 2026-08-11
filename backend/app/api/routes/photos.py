@@ -9,7 +9,7 @@ Returns classified photos so the user can review before generating.
 """
 
 from typing import Annotated
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
 from app.core.security import get_current_user
@@ -52,6 +52,13 @@ async def classify_photos(
     The extension calls this after scraping a listing.
     The response feeds the photo review UI in the popup.
     """
+    # Trial users who've used all 5 free videos can't import/classify — this
+    # calls Claude and costs API credits. (require_active_subscription already
+    # blocks trial-expired / cancelled / past_due; this covers the video-limit
+    # case, which is not is_blocked.)
+    if current_user.subscription_status == "trial" and (current_user.trial_video_count or 0) >= 5:
+        raise HTTPException(status_code=403, detail="TRIAL_VIDEO_LIMIT")
+
     # Limit to 30 photos max to control cost
     photos_to_classify = payload.photo_urls[:30]
 

@@ -32,6 +32,14 @@ class UserBase(SQLModel):
     trial_ends_at: Optional[datetime] = Field(default=None)
     terms_agreed_at: Optional[datetime] = Field(default=None)
 
+    # ── Trial usage + quick launch URLs ───────────────────────
+    trial_video_count: int = Field(default=0)
+    cars_com_url: Optional[str] = Field(default=None, max_length=500)
+    cargurus_url: Optional[str] = Field(default=None, max_length=500)
+    dealer_inventory_url: Optional[str] = Field(default=None, max_length=500)
+    dealer_config_requested: bool = Field(default=False)
+    dealer_config_requested_at: Optional[datetime] = Field(default=None)
+
 
 # ── Database table ────────────────────────────────────────────
 class User(UserBase, table=True):
@@ -80,6 +88,12 @@ class UserRead(SQLModel):
     custom_tagline_es: Optional[str]
     dealership_url: Optional[str]
     terms_agreed_at: Optional[datetime]
+    trial_video_count: int
+    cars_com_url: Optional[str]
+    cargurus_url: Optional[str]
+    dealer_inventory_url: Optional[str]
+    dealer_config_requested: bool
+    dealer_config_requested_at: Optional[datetime]
     created_at: datetime
 
 
@@ -94,3 +108,6 @@ class UserUpdate(SQLModel):
     elevenlabs_voice_id_es: Optional[str] = None
     custom_tagline_es: Optional[str] = None
     dealership_url: Optional[str] = None
+    cars_com_url: Optional[str] = None
+    cargurus_url: Optional[str] = None
+    dealer_inventory_url: Optional[str] = None

@@ -16,7 +16,7 @@ def require_active_subscription(
     Use this on any route that requires an active account.
 
     Allowed states:
-    - trial: within the 14-day trial window
+    - trial: within the 7-day trial window
     - active: paying subscriber
 
     Blocked states:
@@ -64,7 +64,7 @@ def require_active_subscription(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail={
                     "error": "trial_expired",
-                    "message": "Your 14-day free trial has ended. Please subscribe to continue.",
+                    "message": "Your free trial has ended. Please subscribe to continue.",
                     "upgrade_url": "https://dealersorbit.com/orbitads/#pricing",
                 }
             )

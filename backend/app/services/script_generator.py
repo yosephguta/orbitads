@@ -167,6 +167,7 @@ Return ONLY a JSON object with these exact keys. No markdown, no explanation, ju
             messages=[
                 {"role": "user", "content": user_prompt}
             ],
+            timeout=60.0,  # fail fast instead of hanging (SDK default is 10 min)
         )
 
         raw = message.content[0].text.strip()

@@ -57,7 +57,8 @@ async def create_checkout_session(
         }],
         mode="subscription",
         subscription_data={
-            "trial_period_days": 14,
+            # No Stripe trial — users already got the 7-day / 5-video free trial
+            # before subscribing, so charge immediately on checkout.
             "metadata": {"user_id": str(current_user.id), "plan": plan},
         },
         success_url="https://dealersorbit.com/orbitads/?checkout=success",
@@ -81,9 +82,9 @@ async def customer_portal(
 
     session = stripe.billing_portal.Session.create(
         customer=current_user.stripe_customer_id,
-        return_url="https://dealersorbit.com/orbitads/",
+        return_url="https://dealersorbit.com",
     )
-    return {"portal_url": session.url}
+    return {"url": session.url, "portal_url": session.url}
 
 
 # ── Webhook ───────────────────────────────────────────────────
@@ -136,7 +137,7 @@ async def _handle_checkout_complete(session_obj: dict, db):
 
     user.stripe_customer_id = customer_id
     user.stripe_subscription_id = subscription_id
-    user.subscription_status = "trial"  # trial starts immediately
+    user.subscription_status = "active"  # charged immediately, no Stripe trial
     user.role = plan  # starter | pro | elite
     db.add(user)
     await db.commit()
@@ -151,7 +152,13 @@ async def _handle_subscription_updated(subscription: dict, db):
     if not user:
         return
 
-    user.subscription_status = "active" if status in ("active", "trialing") else status
+    # User cancelled but chose "cancel at period end" — they keep access until
+    # the period actually ends (customer.subscription.deleted fires then). Do NOT
+    # revoke access now; Stripe still reports status "active" during this window.
+    if subscription.get("cancel_at_period_end"):
+        user.subscription_status = "active"
+    else:
+        user.subscription_status = "active" if status in ("active", "trialing") else status
     db.add(user)
     await db.commit()
 

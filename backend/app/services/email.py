@@ -30,7 +30,7 @@ def send_verification_email(to: str, full_name: str, token: str) -> None:
         html=f"""
         <p>Hi {full_name},</p>
         <p>Welcome to DealersOrbit! Click the button below to verify your email address
-        and activate your 14-day free trial.</p>
+        and activate your 7-day free trial.</p>
         <p><a href="{link}" style="
             display:inline-block;
             background:#1a56db;
@@ -52,7 +52,7 @@ def send_welcome_email(to: str, full_name: str) -> None:
         subject="You're verified — welcome to DealersOrbit!",
         html=f"""
         <p>Hi {full_name},</p>
-        <p>Your email is verified and your 14-day free trial has started.</p>
+        <p>Your email is verified and your 7-day free trial has started.</p>
         <p>Install the <strong>DealersOrbit Chrome extension</strong>, import vehicles from your
         inventory, and start generating professional video ads and Facebook listings in minutes.</p>
         <p><a href="https://dealersorbit.com/orbitads/" style="
