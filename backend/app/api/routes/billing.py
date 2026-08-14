@@ -23,6 +23,18 @@ PRICE_MAP = {
     "elite":      settings.stripe_price_elite,
     "dealership": settings.stripe_price_dealership,
 }
+# Reverse: Stripe price id -> plan name. Lets webhooks resolve the current plan
+# from a subscription (e.g. after a Customer Portal plan switch).
+PRICE_TO_PLAN = {v: k for k, v in PRICE_MAP.items() if v}
+
+
+def _plan_from_subscription(subscription: dict):
+    """Return 'pro'|'elite'|'dealership' from a Stripe subscription's active price, or None."""
+    try:
+        price_id = subscription["items"]["data"][0]["price"]["id"]
+    except (KeyError, IndexError, TypeError):
+        return None
+    return PRICE_TO_PLAN.get(price_id)
 
 
 # ── Create checkout session ───────────────────────────────────
@@ -167,6 +179,14 @@ async def _handle_subscription_updated(subscription: dict, db):
         user.subscription_status = "active"
     else:
         user.subscription_status = "active" if status in ("active", "trialing") else status
+
+    # Keep purchased_plan in sync with the subscription's current price. This is
+    # what catches Customer Portal plan switches (upgrade/downgrade), which fire
+    # customer.subscription.updated rather than checkout.session.completed.
+    plan = _plan_from_subscription(subscription)
+    if plan:
+        user.purchased_plan = plan
+
     db.add(user)
     await db.commit()
 

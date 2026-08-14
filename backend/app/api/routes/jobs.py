@@ -588,6 +588,36 @@ async def create_job(
             detail="Please provide either a VIN or a listing URL.",
         )
 
+    # Trial-completion gate (authoritative — mirrors the pipeline so a bypassed
+    # client can't create jobs after the trial is finished). Time-expiry is also
+    # blocked by require_active_subscription; the 5-video cap is enforced only
+    # here + in the pipeline, so it must be checked at creation too.
+    if current_user.subscription_status == "trial":
+        from app.core.config import get_settings
+        settings = get_settings()
+        is_dev = bool(settings.dev_test_email and current_user.email == settings.dev_test_email)
+        if not is_dev:
+            now = datetime.now(timezone.utc)
+            trial_end = current_user.trial_ends_at or now
+            if trial_end.tzinfo is None:
+                trial_end = trial_end.replace(tzinfo=timezone.utc)
+            if now > trial_end:
+                raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="TRIAL_EXPIRED")
+            if (current_user.trial_video_count or 0) >= 5:
+                raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="TRIAL_VIDEO_LIMIT")
+
+    # Server-side entitlement gate (authoritative — the extension's outro gate is
+    # UX only and can be bypassed by editing the client). Personal outros are an
+    # Elite/Dealership feature; trial users get them during the trial.
+    if payload.video_type == "with_outro":
+        is_trial   = current_user.subscription_status == "trial"
+        has_outro  = current_user.purchased_plan in ("elite", "dealership")
+        if not is_trial and not has_outro:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="OUTRO_REQUIRES_ELITE",
+            )
+
     job = Job(
         user_id=current_user.id,
         vin=payload.vin,
