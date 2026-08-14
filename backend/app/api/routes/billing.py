@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import stripe
 from typing import Annotated, Optional
 from pydantic import BaseModel
@@ -121,24 +122,34 @@ async def stripe_webhook(
     payload = await request.body()
 
     try:
-        event = stripe.Webhook.construct_event(
+        stripe.Webhook.construct_event(
             payload, stripe_signature, settings.stripe_webhook_secret
         )
     except stripe.error.SignatureVerificationError:
         raise HTTPException(status_code=400, detail="Invalid webhook signature.")
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid webhook payload.")
+
+    # Signature verified above. Parse the same raw bytes as plain JSON so handlers
+    # get regular dicts — the StripeObject returned by construct_event doesn't
+    # support .get() in stripe v15 (it routes through __getattr__ and raises
+    # AttributeError, which was 500ing every customer.subscription.updated event).
+    event = json.loads(payload)
+    event_type = event.get("type")
+    obj = event.get("data", {}).get("object", {})
 
     # ── Handle events ─────────────────────────────────────────
-    if event["type"] == "checkout.session.completed":
-        await _handle_checkout_complete(event["data"]["object"], session)
+    if event_type == "checkout.session.completed":
+        await _handle_checkout_complete(obj, session)
 
-    elif event["type"] == "customer.subscription.updated":
-        await _handle_subscription_updated(event["data"]["object"], session)
+    elif event_type == "customer.subscription.updated":
+        await _handle_subscription_updated(obj, session)
 
-    elif event["type"] in ("customer.subscription.deleted", "customer.subscription.paused"):
-        await _handle_subscription_cancelled(event["data"]["object"], session)
+    elif event_type in ("customer.subscription.deleted", "customer.subscription.paused"):
+        await _handle_subscription_cancelled(obj, session)
 
-    elif event["type"] == "invoice.payment_failed":
-        await _handle_payment_failed(event["data"]["object"], session)
+    elif event_type == "invoice.payment_failed":
+        await _handle_payment_failed(obj, session)
 
     return {"status": "ok"}
 
