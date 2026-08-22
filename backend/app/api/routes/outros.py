@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import time
-from typing import Annotated
+from typing import Annotated, Optional
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
 from sqlmodel import select
@@ -29,16 +29,29 @@ async def upload_outro(
     session: Annotated[AsyncSession, Depends(get_session)],
     file: UploadFile = File(...),
     name: str = Form(...),
+    duration_seconds: Optional[str] = Form(None),
 ):
     """
     Upload a user-recorded outro clip. Stored in S3, record saved to DB.
     Returns the outro with a fresh 7-day presigned URL.
+
+    `duration_seconds` is the real clip length measured client-side (the
+    browser can read video metadata; the backend can't without ffprobe). It's
+    stored so the video pipeline uses the actual length instead of a hardcoded
+    fallback that cut outros off.
     """
     if file.content_type not in ALLOWED_VIDEO_TYPES:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail=f"Unsupported video type '{file.content_type}'. Allowed: mp4, mov, webm.",
         )
+
+    parsed_duration: Optional[float] = None
+    if duration_seconds:
+        try:
+            parsed_duration = float(duration_seconds)
+        except (ValueError, TypeError):
+            parsed_duration = None
 
     ext = (file.filename or "outro.mp4").rsplit(".", 1)[-1].lower() or "mp4"
     s3_key = s3.make_outro_key(current_user.id, int(time.time()), ext)
@@ -50,7 +63,7 @@ async def upload_outro(
         user_id=current_user.id,
         name=name.strip(),
         s3_key=s3_key,
-        duration_seconds=None,
+        duration_seconds=parsed_duration,
     )
     session.add(outro)
     await session.commit()

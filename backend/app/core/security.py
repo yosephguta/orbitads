@@ -1,7 +1,7 @@
 from datetime import datetime, timedelta, timezone
 from typing import Annotated
 
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import OAuth2PasswordBearer
 from jose import JWTError, jwt
 from passlib.context import CryptContext
@@ -89,6 +89,7 @@ oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/auth/login")
 
 
 async def get_current_user(
+    request: Request,
     token: Annotated[str, Depends(oauth2_scheme)],
     session: Annotated[AsyncSession, Depends(get_session)],
 ):
@@ -121,4 +122,17 @@ async def get_current_user(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="User not found.",
         )
+
+    # Capture extension version for visibility (non-blocking, best effort).
+    # Only writes when the version actually changes, so this isn't a write on
+    # every request. Wrapped so a DB hiccup never blocks an authenticated call.
+    try:
+        ext_version = request.headers.get("X-Extension-Version")
+        if ext_version and user.last_extension_version != ext_version:
+            user.last_extension_version = ext_version
+            session.add(user)
+            await session.commit()
+    except Exception as e:  # noqa: BLE001
+        print(f"Failed to record extension version: {e}")
+
     return user

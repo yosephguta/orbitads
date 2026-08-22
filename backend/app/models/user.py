@@ -42,6 +42,13 @@ class UserBase(SQLModel):
     dealer_config_requested: bool = Field(default=False)
     dealer_config_requested_at: Optional[datetime] = Field(default=None)
 
+    # ── Extension version tracking (backward-compat visibility) ───
+    last_extension_version: Optional[str] = Field(default=None, max_length=20)
+
+    # ── Password reset ────────────────────────────────────────────
+    password_reset_token: Optional[str] = Field(default=None, max_length=100)
+    password_reset_expires_at: Optional[datetime] = Field(default=None)
+
 
 # ── Database table ────────────────────────────────────────────
 class User(UserBase, table=True):

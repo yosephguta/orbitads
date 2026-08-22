@@ -318,7 +318,9 @@ async def _run_pipeline(job_id: int, user_id: int):
 
             # Fetch outro clip with a fresh session
             outro_url        = None
-            outro_duration   = 8.0
+            # 10s fallback (matches the recommended max) — used only for old
+            # outros uploaded before duration_seconds was captured on upload.
+            outro_duration   = 10.0
             slideshow_volume = 1.0
             if job_video_type == "with_outro" and job_outro_video_id:
                 async with AsyncSessionLocal() as session:
@@ -326,7 +328,7 @@ async def _run_pipeline(job_id: int, user_id: int):
                     if outro and outro.user_id == user_id:
                         outro_s3_key   = outro.s3_key
                         outro_url      = create_presigned_download_url(outro_s3_key, expires_in=3600)
-                        outro_duration = outro.duration_seconds or 8.0
+                        outro_duration = outro.duration_seconds or 10.0
                         print(f"Outro: {outro.name}, {outro_duration}s")
                     else:
                         print("Outro not found — assembling slideshow only")

@@ -47,24 +47,57 @@ def send_verification_email(to: str, full_name: str, token: str) -> None:
 
 
 def send_welcome_email(to: str, full_name: str) -> None:
+    first_name = (full_name or "").split(" ")[0] or full_name
+    # Link to the on-site player page (HTML5 <video>) so it plays in-browser
+    # instead of downloading the raw file.
+    tutorial_url = "https://dealersorbit.com/tutorial"
+    chrome_url = "https://chromewebstore.google.com/detail/dealersorbit/kmlogmgghaohcanigabfccbnpepemglb"
+    edge_url = "https://microsoftedge.microsoft.com/addons/detail/dealersorbit/fjmgbihljfmkgpnlkjjokahcpmnlfhgi"
     _send(
         to=to,
-        subject="You're verified — welcome to DealersOrbit!",
+        subject="You're all set! Welcome to DealersOrbit 🎉",
         html=f"""
-        <p>Hi {full_name},</p>
-        <p>Your email is verified and your 7-day free trial has started.</p>
-        <p>Install the <strong>DealersOrbit Chrome extension</strong>, import vehicles from your
-        inventory, and start generating professional video ads and Facebook listings in minutes.</p>
-        <p><a href="https://dealersorbit.com/orbitads/" style="
-            display:inline-block;
-            background:#1a56db;
-            color:#fff;
-            padding:12px 24px;
-            border-radius:6px;
-            text-decoration:none;
-            font-weight:700;
-        ">Get started</a></p>
-        <p>Reply to this email if you have any questions — we're happy to help.</p>
+        <div style="font-family:-apple-system,sans-serif;max-width:520px;margin:0 auto;padding:20px">
+          <h1 style="color:#111827">Welcome to DealersOrbit, {first_name}!</h1>
+          <p style="color:#6b7280;line-height:1.6">
+            Your account is verified and your 7-day free trial has started. Here's how to get going:
+          </p>
+
+          <div style="background:#f9fafb;border-radius:12px;padding:20px;margin:20px 0">
+            <h3 style="margin-top:0">📹 Watch the quick tutorial</h3>
+            <a href="{tutorial_url}" style="display:inline-block;background:#1a56db;color:white;padding:10px 20px;
+                      border-radius:8px;text-decoration:none;font-weight:700">
+              ▶️ Watch Now
+            </a>
+          </div>
+
+          <div style="margin:24px 0">
+            <h3>1. Install the extension</h3>
+            <p style="color:#6b7280">
+              <a href="{chrome_url}">Chrome</a>
+              &nbsp;·&nbsp;
+              <a href="{edge_url}">Edge</a>
+            </p>
+
+            <h3>2. Sign in</h3>
+            <p style="color:#6b7280">Use the email and password you just created.</p>
+
+            <h3>3. Import your first vehicle</h3>
+            <p style="color:#6b7280">
+              Search "[your dealership] Cars.com" or "CarGurus" on Google, open your dealership's
+              page, and click Import on any vehicle.
+            </p>
+
+            <h3>4. Generate your first ad</h3>
+            <p style="color:#6b7280">
+              Click Generate Ad, pick a theme, and watch DealersOrbit build your video in under a minute.
+            </p>
+          </div>
+
+          <p style="color:#9ca3af;font-size:12px">
+            Questions? Just reply to this email or reach us at mail@dealersorbit.com
+          </p>
+        </div>
         """,
     )
 

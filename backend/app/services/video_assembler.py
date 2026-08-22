@@ -76,7 +76,7 @@ def build_ad_timeline_photo_only(
     duration: float = 24.5,
     brand_color: str = DEFAULT_BRAND_COLOR,
     outro_video_url: Optional[str] = None,
-    outro_duration: float = 8.0,
+    outro_duration: float = 10.0,
     slideshow_volume: float = 1.0,
     language: str = 'en',
 ) -> dict:
@@ -92,7 +92,7 @@ def build_ad_timeline_photo_only(
         duration:         Audio/slideshow length in seconds
         brand_color:      Hex brand colour for overlays
         outro_video_url:  Optional user-recorded outro clip URL
-        outro_duration:   Length of outro clip in seconds (default 8s)
+        outro_duration:   Length of outro clip in seconds (default 10s)
 
     The vehicle name overlay and "Message Me Today" CTA overlay appear only
     during the slideshow. The outro clip fades in and plays with no overlays —

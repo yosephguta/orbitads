@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import secrets
 import uuid
 from datetime import datetime, timezone, timedelta
 from typing import Annotated
@@ -7,6 +8,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import RedirectResponse
 from fastapi.security import OAuth2PasswordRequestForm
+from pydantic import BaseModel
 from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession as SQLModelAsyncSession
 
@@ -141,7 +143,7 @@ async def verify_email(
     user = result.first()
 
     if not user:
-        return RedirectResponse("https://dealersorbit.com/orbitads/?verified=false")
+        return RedirectResponse("https://dealersorbit.com/verified?status=invalid")
 
     user.is_verified = True
     user.verification_token = None
@@ -151,7 +153,7 @@ async def verify_email(
 
     send_welcome_email(to=user.email, full_name=user.full_name)
 
-    return RedirectResponse("https://dealersorbit.com/orbitads/?verified=true")
+    return RedirectResponse("https://dealersorbit.com/verified")
 
 
 # ── Login ─────────────────────────────────────────────────────
@@ -185,6 +187,157 @@ async def login(
 
     token = create_access_token(user_id=user.id)
     return {"access_token": token, "token_type": "bearer"}
+
+
+# ── Password reset ────────────────────────────────────────────
+class ForgotPasswordRequest(BaseModel):
+    email: str
+
+
+class ResetPasswordRequest(BaseModel):
+    token: str
+    new_password: str
+
+
+@router.post("/forgot-password")
+async def forgot_password(
+    payload: ForgotPasswordRequest,
+    session: Annotated[SQLModelAsyncSession, Depends(get_session)],
+):
+    result = await session.exec(
+        select(User).where(User.email == payload.email.lower().strip())
+    )
+    user = result.first()
+
+    # Always return generic success — never reveal whether an email exists.
+    generic_response = {
+        "message": "If an account exists with that email, a reset link has been sent."
+    }
+
+    if not user:
+        return generic_response
+
+    # Naive UTC datetimes throughout — PostgreSQL TIMESTAMP WITHOUT TIME ZONE
+    # rejects timezone-aware datetimes (see CLAUDE.md bug #24).
+    token = secrets.token_urlsafe(32)
+    user.password_reset_token = token
+    user.password_reset_expires_at = datetime.utcnow() + timedelta(hours=1)
+    session.add(user)
+    await session.commit()
+
+    try:
+        import resend
+        settings = get_settings()
+        resend.api_key = settings.resend_api_key
+
+        reset_url = f"https://dealersorbit.com/reset-password?token={token}"
+
+        resend.Emails.send({
+            "from": "DealersOrbit <notifications@mail.dealersorbit.com>",
+            "to": [user.email],
+            "subject": "Reset your DealersOrbit password",
+            "html": f"""
+                <div style="font-family:-apple-system,sans-serif;max-width:480px;margin:0 auto;padding:20px">
+                  <h2>Reset your password</h2>
+                  <p>Hi {user.first_name or user.full_name},</p>
+                  <p>Click the button below to reset your DealersOrbit password. This link expires in 1 hour.</p>
+                  <a href="{reset_url}" style="display:inline-block;background:#1a56db;color:white;
+                     padding:12px 24px;border-radius:8px;text-decoration:none;font-weight:700;margin:16px 0">
+                    Reset Password
+                  </a>
+                  <p style="font-size:12px;color:#9ca3af">
+                    If you didn't request this, you can safely ignore this email.
+                  </p>
+                </div>
+            """,
+        })
+    except Exception as e:  # noqa: BLE001
+        print(f"Failed to send reset email: {e}")
+
+    return generic_response
+
+
+@router.post("/reset-password")
+async def reset_password(
+    payload: ResetPasswordRequest,
+    session: Annotated[SQLModelAsyncSession, Depends(get_session)],
+):
+    result = await session.exec(
+        select(User).where(User.password_reset_token == payload.token)
+    )
+    user = result.first()
+
+    if not user:
+        raise HTTPException(status_code=400, detail="Invalid or expired reset link.")
+
+    if (
+        not user.password_reset_expires_at
+        or user.password_reset_expires_at < datetime.utcnow()
+    ):
+        raise HTTPException(
+            status_code=400,
+            detail="This reset link has expired. Please request a new one.",
+        )
+
+    if len(payload.new_password) < 8:
+        raise HTTPException(
+            status_code=400, detail="Password must be at least 8 characters."
+        )
+
+    user.hashed_password = hash_password(payload.new_password)
+    user.password_reset_token = None
+    user.password_reset_expires_at = None
+    session.add(user)
+    await session.commit()
+
+    return {"message": "Password reset successfully. You can now log in."}
+
+
+# ── Support contact ───────────────────────────────────────────
+class SupportRequest(BaseModel):
+    subject: str
+    message: str
+
+
+@router.post("/support/contact")
+async def contact_support(
+    payload: SupportRequest,
+    current_user: Annotated[User, Depends(get_current_user)],
+):
+    """
+    In-extension "Contact Support" form. Emails mail@dealersorbit.com with the
+    user's context (plan, dealership, extension version) auto-attached so
+    support has what it needs without a back-and-forth.
+    """
+    try:
+        import resend
+        settings = get_settings()
+        resend.api_key = settings.resend_api_key
+
+        resend.Emails.send({
+            "from": "DealersOrbit <notifications@mail.dealersorbit.com>",
+            "to": ["mail@dealersorbit.com"],
+            "reply_to": current_user.email,
+            "subject": f"🆘 Support Request — {payload.subject}",
+            "html": f"""
+                <h2>Support Request</h2>
+                <p><strong>From:</strong> {current_user.full_name} ({current_user.email})</p>
+                <p><strong>Dealership:</strong> {current_user.dealership_name or 'N/A'}</p>
+                <p><strong>Plan:</strong> {current_user.purchased_plan or current_user.subscription_status}</p>
+                <p><strong>Extension version:</strong> {current_user.last_extension_version or 'Unknown'}</p>
+                <hr>
+                <p><strong>Subject:</strong> {payload.subject}</p>
+                <p><strong>Message:</strong></p>
+                <p>{payload.message}</p>
+            """,
+        })
+        return {"success": True}
+    except Exception as e:  # noqa: BLE001
+        print(f"Support email failed: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail="Failed to send. Please email mail@dealersorbit.com directly.",
+        )
 
 
 # ── Me ────────────────────────────────────────────────────────
