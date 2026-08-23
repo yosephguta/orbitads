@@ -16,6 +16,7 @@ from app.core.security import get_current_user
 from app.core.middleware import require_active_subscription
 from app.models.user import User
 from app.services.photo_classifier import classify_photos_batch, sort_into_walkaround
+from app.services.analytics import record_api_usage
 
 router = APIRouter(
     prefix="/photos", 
@@ -68,6 +69,15 @@ async def classify_photos(
         photo_urls=photos_to_classify,
         max_photos=30,
         concurrency=3,
+    )
+
+    # Log usage for cost attribution — each photo is one Claude vision call,
+    # so quantity = number of photos classified. Fire-and-forget (never raises).
+    await record_api_usage(
+        "photo_classification",
+        user_id=current_user.id,
+        quantity=len(photos_to_classify),
+        model="claude-sonnet-4-6",
     )
 
     # Sort into walkaround order

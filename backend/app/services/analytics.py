@@ -5,6 +5,37 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 from app.models.ad_event import AdEvent
 from app.models.user import User
 
+
+async def record_api_usage(
+    call_type: str,
+    user_id: Optional[int] = None,
+    quantity: int = 1,
+    input_tokens: Optional[int] = None,
+    output_tokens: Optional[int] = None,
+    model: Optional[str] = None,
+) -> None:
+    """
+    Fire-and-forget usage log for cost attribution (feeds usage_report + the
+    future admin dashboard). Opens its own session and NEVER raises — a logging
+    failure must not break the request it's measuring.
+    """
+    try:
+        # Imported lazily to avoid circular imports at module load.
+        from app.core.database import AsyncSessionLocal
+        from app.models.api_usage import ApiUsage
+        async with AsyncSessionLocal() as session:
+            session.add(ApiUsage(
+                call_type=call_type,
+                user_id=user_id,
+                quantity=quantity,
+                input_tokens=input_tokens,
+                output_tokens=output_tokens,
+                model=model,
+            ))
+            await session.commit()
+    except Exception as e:  # noqa: BLE001
+        print(f"[usage] failed to record {call_type}: {e}")
+
 PRELOADED_VOICE_IDS = {
     # English
     'Gubgw9l4dtIoQA9YZHgx', '3WqHLnw80rOZqJzW9YRB',

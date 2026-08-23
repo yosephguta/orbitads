@@ -28,6 +28,7 @@ app.add_middleware(
 )
 
 from app.models.ad_event import AdEvent  # noqa — ensures table is created
+from app.models.api_usage import ApiUsage  # noqa — ensures table is created
 from app.models.dealership import Dealership  # noqa — ensures table is created
 from app.models.dealer_platform import DealerPlatform  # noqa — ensures table is created
 from app.models.saved_script import SavedScript  # noqa — ensures table is created
