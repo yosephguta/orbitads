@@ -106,9 +106,39 @@ async def run():
         except Exception as e:  # noqa: BLE001
             print(f"  api_usage: table not present yet ({str(e).splitlines()[0]})")
 
+        # ── Generation cost-correlation (from AdEvent — usable for July) ──
+        # custom_script_used=false => a Claude SCRIPT call happened; true => the
+        # user supplied the script, so NO Claude script call. render_time_seconds
+        # correlates with the Shotstack bill. Each generation = 1 ElevenLabs voiceover.
+        g = (await R(f"""
+            SELECT COUNT(*),
+                   SUM(CASE WHEN NOT custom_script_used THEN 1 ELSE 0 END),
+                   SUM(CASE WHEN custom_script_used THEN 1 ELSE 0 END),
+                   COALESCE(SUM(render_time_seconds),0),
+                   COALESCE(ROUND(AVG(render_time_seconds)),0)
+            FROM ad_events
+            WHERE event_type IN ('generated','generation_failed') {where}"""))[0]
+        total_g, claude_g, custom_g, rt_sum, rt_avg = g
+        print("  generations (AdEvent):")
+        print(f"    total={total_g}  claude_script_calls={claude_g}  custom_script(no claude)={custom_g}")
+        print(f"    render_time_seconds: sum={rt_sum} avg={rt_avg}  (~Shotstack); voiceovers≈{total_g} (~ElevenLabs)")
+        for fmt, n, rs in await R(f"""SELECT COALESCE(video_format,'?'), COUNT(*), COALESCE(SUM(render_time_seconds),0)
+            FROM ad_events WHERE event_type IN ('generated','generation_failed') {where}
+            GROUP BY video_format ORDER BY 2 DESC"""):
+            print(f"      {fmt:14} {n}  render_s={rs}")
+
     await block("ALL-TIME", "")
     if MONTH:
         await block(f"MONTH {MONTH}", month_where(MONTH))
+        # Per-day — align with the daily rows in the Anthropic / Shotstack bills.
+        dcol = ("substr(created_at,1,10)" if is_sqlite else "to_char(created_at,'YYYY-MM-DD')")
+        print(f"\n--- {MONTH}: generations per day (claude scripts / render_s) ---")
+        for d, n, cs, rs in await R(f"""SELECT {dcol} d, COUNT(*),
+                   SUM(CASE WHEN NOT custom_script_used THEN 1 ELSE 0 END),
+                   COALESCE(SUM(render_time_seconds),0)
+            FROM ad_events WHERE event_type IN ('generated','generation_failed')
+              {month_where(MONTH)} GROUP BY d ORDER BY d"""):
+            print(f"    {d}  gens={n}  claude_scripts={cs}  render_s={rs}")
     else:
         print("\n--- jobs per month ---")
         col = ("substr(created_at,1,7)" if is_sqlite else "to_char(created_at,'YYYY-MM')")
