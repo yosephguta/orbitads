@@ -27,7 +27,7 @@ from app.core.security import get_current_user
 from app.models.user import User
 from app.models.listing import Listing, ListingRead
 from app.models.dealership import Dealership
-from app.services.analytics import track_posting
+from app.services.analytics import track_posting, record_api_usage
 from app.services.tagline import get_effective_tagline
 
 import anthropic
@@ -221,6 +221,11 @@ Respond with ONLY valid JSON: {{"title": "...", "description": "...", "tags": [.
         tagline = await get_effective_tagline(session, current_user)
     if tagline:
         description = description.rstrip() + f"\n\n{tagline}"
+
+    _u = getattr(msg, "usage", None)
+    await record_api_usage("marketplace_caption", user_id=current_user.id,
+        input_tokens=getattr(_u, "input_tokens", None),
+        output_tokens=getattr(_u, "output_tokens", None), model="claude-sonnet-4-6")
 
     return GenerateResponse(
         title=data.get("title", vehicle_info),
@@ -486,6 +491,10 @@ Return ONLY the caption. No labels. Preserve all line breaks exactly as written.
         max_tokens=400,
         messages=[{"role": "user", "content": prompt}],
     )
+    _u = getattr(msg, "usage", None)
+    await record_api_usage("fb_post_caption", user_id=current_user.id,
+        input_tokens=getattr(_u, "input_tokens", None),
+        output_tokens=getattr(_u, "output_tokens", None), model="claude-sonnet-4-6")
     return FbPostCaptionResponse(caption=msg.content[0].text.strip())
 
 
@@ -515,6 +524,10 @@ async def translate_tagline(
             ),
         }],
     )
+    _u = getattr(message, "usage", None)
+    await record_api_usage("tagline_translation", user_id=current_user.id,
+        input_tokens=getattr(_u, "input_tokens", None),
+        output_tokens=getattr(_u, "output_tokens", None), model="claude-sonnet-4-6")
     return {'translated': message.content[0].text.strip()}
 
 
@@ -562,6 +575,10 @@ Speak as a narrator presenting the vehicle — not as a named individual.
 Return ONLY the script text, no labels or formatting."""
         }]
     )
+    _u = getattr(message, "usage", None)
+    await record_api_usage("script_preview", user_id=current_user.id,
+        input_tokens=getattr(_u, "input_tokens", None),
+        output_tokens=getattr(_u, "output_tokens", None), model="claude-sonnet-4-6")
     return {"script": message.content[0].text.strip()}
 
 
