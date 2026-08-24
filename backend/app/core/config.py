@@ -52,6 +52,12 @@ class Settings(BaseSettings):
     heygen_api_key: str = ""        # Phase 2 — blank for now
     shotstack_api_key: str = ""     # Phase 3 — blank for now
 
+    # ── Photo classifier (swappable provider) ─────────────────
+    photo_classifier_provider: str = "anthropic"  # 'anthropic' | 'openai' | 'google'
+    photo_classifier_model: str = "claude-haiku-4-5-20251001"
+    openai_api_key: str = ""
+    google_api_key: str = ""
+
     # ── Redis ─────────────────────────────────────────────────
     # Used for the job queue in Phase 2
     redis_url: str = "redis://localhost:6379/0"

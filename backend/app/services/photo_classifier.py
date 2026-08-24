@@ -20,13 +20,30 @@ import asyncio
 import base64
 import httpx
 import json
+from datetime import datetime, timedelta
 from typing import Optional
 
+import re
+
 import anthropic
+from sqlalchemy import delete
 
 from app.core.config import get_settings
+from app.services.image_utils import fetch_and_downsample
 
 settings = get_settings()
+
+# ── Cache write/purge tuning ──────────────────────────────────
+# Cars rarely stay on a lot longer than ~2 months, so cache entries older than
+# this are useless — purge them. The purge is throttled to run at most once per
+# PURGE_INTERVAL and always happens in a fire-and-forget background task, so it
+# never adds latency to a classify request.
+CACHE_TTL = timedelta(days=60)
+PURGE_INTERVAL = timedelta(hours=24)
+_last_cache_purge_at: Optional[datetime] = None
+
+# Hold references to fire-and-forget cache tasks so they aren't GC'd mid-run.
+_cache_bg_tasks: set = set()
 
 _client = anthropic.AsyncAnthropic(api_key=settings.anthropic_api_key)
 
@@ -52,6 +69,160 @@ WALKAROUND_ORDER = [
 
 # Valid categories Claude can return
 VALID_CATEGORIES = set(WALKAROUND_ORDER)
+
+# How many photos to send in a single multi-image API call.
+BATCH_SIZE = 5
+
+# Junk URLs are labeled "other" without spending an API call.
+_JUNK_URL_PATTERNS = [
+    "valuebadge", "showme", "carfax", "autocheck", "logo", "badge",
+    "iv.png", "videoplayer", "dealervideopro", "showme.svg",
+]
+
+
+def _is_junk_url(url: str) -> bool:
+    u = url.lower()
+    return any(p in u for p in _JUNK_URL_PATTERNS)
+
+
+# ── Multi-image batch classification ──────────────────────────
+# One API call classifies BATCH_SIZE downsampled photos at once, returning a
+# JSON array of {"index", "category"}. The granular WALKAROUND_ORDER labels are
+# preserved so sort_into_walkaround() and photos.py keep working unchanged.
+CLASSIFICATION_SYSTEM_PROMPT = """You are classifying car dealership photos for a vehicle walkaround video.
+You will see several numbered photos in one request. For EACH numbered photo, assign exactly ONE label.
+
+FULL-CAR EXTERIOR (at least half the car body visible — label by the angle you view the car FROM):
+- exterior_front — straight at the FRONT: grille and both headlights centered, car facing you, no side visible
+- exterior_front_right — front 3/4 from the RIGHT: you see the front AND the full right (passenger) side together
+- exterior_right — the RIGHT side profile: passenger doors face you flat, front points left, front/rear not centered
+- exterior_rear_right — rear 3/4 from the RIGHT: you see the rear AND the full right side together
+- exterior_rear — straight at the REAR: taillights and bumper centered, back of car faces you, no side visible
+- exterior_rear_left — rear 3/4 from the LEFT: you see the rear AND the full left side together
+- exterior_left — the LEFT side profile: driver doors face you flat, front points right
+- exterior_front_left — front 3/4 from the LEFT: you see the front AND the full left (driver) side together
+
+CLOSE-UP EXTERIOR DETAIL (zoomed on one exterior part, most of the body NOT visible):
+- exterior_detail — wheel, tire, headlight, taillight, mirror, badge/emblem, grille close-up, trim piece
+
+INTERIOR:
+- interior_dashboard — steering wheel, gauges, infotainment screen, center dash
+- interior_seats — seats, headrests, upholstery, rows of seating
+- interior_cargo — trunk or cargo/boot area, seats folded for cargo
+- interior_detail — center console, door panel, buttons/controls, gear shifter, any other interior close-up
+
+NOT A USABLE CAR PHOTO:
+- other — window sticker, price sheet, dealership logo/sign, QR code, carfax report, engine bay, blurry/unclear
+
+Disambiguation rules:
+- 3/4 vs straight: if you can see the front AND a full side at once it is *_front_right / *_front_left (rear equivalents for the back) — NOT plain exterior_front / exterior_rear.
+- side profile vs 3/4: exterior_left / exterior_right show a flat side with the front/rear NOT centered; if a corner is centered it is a 3/4 view.
+- LEFT = driver side, RIGHT = passenger side. Judge by which side of the car faces the camera.
+- If most of the body is NOT visible and it is a zoomed exterior part → exterior_detail (never a full exterior angle).
+- When unsure between interior_detail and other, choose interior_detail.
+
+Return ONLY a JSON array, one object per photo IN ORDER, no markdown, no prose:
+[{"index": 1, "category": "exterior_front"}, {"index": 2, "category": "interior_seats"}]
+Every photo must get exactly one category from the labels above."""
+
+
+def _parse_classification_json(raw: str) -> list:
+    """Strip any markdown fences and parse the model's JSON array response."""
+    raw = raw.strip()
+    raw = re.sub(r"^```(?:json)?\s*", "", raw)
+    raw = re.sub(r"\s*```$", "", raw)
+    return json.loads(raw)
+
+
+async def _classify_batch_anthropic(images_b64: list, model: str):
+    content = [{"type": "text", "text": f"Classify these {len(images_b64)} photos:"}]
+    for i, img_b64 in enumerate(images_b64, start=1):
+        content.append({"type": "text", "text": f"Photo {i}:"})
+        content.append({
+            "type": "image",
+            "source": {"type": "base64", "media_type": "image/jpeg", "data": img_b64},
+        })
+
+    response = await _client.messages.create(
+        model=model,
+        max_tokens=1000,
+        system=CLASSIFICATION_SYSTEM_PROMPT,
+        messages=[{"role": "user", "content": content}],
+    )
+    raw = "".join(b.text for b in response.content if b.type == "text")
+    usage = {
+        "input_tokens": getattr(response.usage, "input_tokens", 0) or 0,
+        "output_tokens": getattr(response.usage, "output_tokens", 0) or 0,
+    }
+    return _parse_classification_json(raw), usage
+
+
+async def _classify_batch_openai(images_b64: list, model: str):
+    from openai import AsyncOpenAI
+
+    client = AsyncOpenAI(api_key=settings.openai_api_key)
+    content = [{"type": "text", "text": f"Classify these {len(images_b64)} photos:"}]
+    for i, img_b64 in enumerate(images_b64, start=1):
+        content.append({"type": "text", "text": f"Photo {i}:"})
+        content.append({
+            "type": "image_url",
+            "image_url": {"url": f"data:image/jpeg;base64,{img_b64}"},
+        })
+
+    response = await client.chat.completions.create(
+        model=model,
+        max_tokens=1000,
+        messages=[
+            {"role": "system", "content": CLASSIFICATION_SYSTEM_PROMPT},
+            {"role": "user", "content": content},
+        ],
+    )
+    raw = response.choices[0].message.content
+    usage = {
+        "input_tokens": getattr(response.usage, "prompt_tokens", 0) or 0,
+        "output_tokens": getattr(response.usage, "completion_tokens", 0) or 0,
+    }
+    return _parse_classification_json(raw), usage
+
+
+async def _classify_batch_google(images_b64: list, model: str):
+    import google.generativeai as genai
+
+    genai.configure(api_key=settings.google_api_key)
+    model_instance = genai.GenerativeModel(
+        model, system_instruction=CLASSIFICATION_SYSTEM_PROMPT
+    )
+    parts = [f"Classify these {len(images_b64)} photos:"]
+    for i, img_b64 in enumerate(images_b64, start=1):
+        parts.append(f"Photo {i}:")
+        parts.append({"mime_type": "image/jpeg", "data": base64.b64decode(img_b64)})
+
+    response = await model_instance.generate_content_async(parts)
+    meta = getattr(response, "usage_metadata", None)
+    usage = {
+        "input_tokens": getattr(meta, "prompt_token_count", 0) or 0,
+        "output_tokens": getattr(meta, "candidates_token_count", 0) or 0,
+    }
+    return _parse_classification_json(response.text), usage
+
+
+async def classify_photo_batch_via_api(images_b64: list):
+    """
+    Dispatch a batch of downsampled base64 JPEGs to the configured provider.
+    Returns (classifications, usage) where classifications is a list of
+    {"index": int, "category": str} and usage is {"input_tokens", "output_tokens"}.
+    """
+    provider = settings.photo_classifier_provider
+    model = settings.photo_classifier_model
+
+    if provider == "anthropic":
+        return await _classify_batch_anthropic(images_b64, model)
+    elif provider == "openai":
+        return await _classify_batch_openai(images_b64, model)
+    elif provider == "google":
+        return await _classify_batch_google(images_b64, model)
+    else:
+        raise ValueError(f"Unknown photo_classifier_provider: {provider}")
 
 
 # ── Single photo classification ───────────────────────────────
@@ -168,39 +339,229 @@ async def classify_photo(image_url: str) -> str:
         return "other"
 
 
+# ── Fire-and-forget cache persist + purge ─────────────────────
+async def _persist_and_purge_cache(entries: list) -> None:
+    """
+    Write new classifications to the cache in ONE bulk insert (ON CONFLICT DO
+    NOTHING, so concurrent writers / repeats are safe), then opportunistically
+    purge entries older than CACHE_TTL — throttled to once per PURGE_INTERVAL.
+
+    Runs in a background task: never blocks the classify response, never raises.
+    """
+    global _last_cache_purge_at
+    from app.core.database import AsyncSessionLocal
+    from app.models.photo_classification_cache import (
+        PhotoClassificationCache,
+        hash_photo_url,
+    )
+
+    # Dialect-appropriate INSERT ... ON CONFLICT DO NOTHING.
+    if "postgresql" in settings.database_url:
+        from sqlalchemy.dialects.postgresql import insert as _insert
+    else:
+        from sqlalchemy.dialects.sqlite import insert as _insert
+
+    try:
+        now = datetime.utcnow()
+
+        # Dedup by url_hash (same photo can appear twice with different query strings).
+        deduped: dict = {}
+        for url, category in entries:
+            deduped[hash_photo_url(url)] = (url, category)
+        rows = [
+            {"url_hash": h, "photo_url": url[:1000], "category": cat, "created_at": now}
+            for h, (url, cat) in deduped.items()
+        ]
+
+        async with AsyncSessionLocal() as session:
+            if rows:
+                stmt = (
+                    _insert(PhotoClassificationCache)
+                    .values(rows)
+                    .on_conflict_do_nothing(index_elements=["url_hash"])
+                )
+                await session.execute(stmt)
+                await session.commit()
+
+            # Throttled auto-purge of stale rows (>2 months old).
+            if _last_cache_purge_at is None or (now - _last_cache_purge_at) >= PURGE_INTERVAL:
+                _last_cache_purge_at = now
+                await session.execute(
+                    delete(PhotoClassificationCache).where(
+                        PhotoClassificationCache.created_at < now - CACHE_TTL
+                    )
+                )
+                await session.commit()
+    except Exception as e:
+        print(f"[classify] cache persist/purge failed (non-fatal): {e}")
+
+
 # ── Batch classification ──────────────────────────────────────
 async def classify_photos_batch(
     photo_urls: list[str],
-    max_photos: int = 20,
+    max_photos: int = 30,
     concurrency: int = 3,
+    user_id: Optional[int] = None,
 ) -> list[dict]:
     """
-    Classify multiple photos concurrently and return them with labels.
+    Classify multiple photos and return them with granular walkaround labels.
+
+    Downsamples every photo (Part 1) then classifies them in multi-image batches
+    of BATCH_SIZE — one API call per batch instead of one per photo — through the
+    provider/model configured in settings (Part 2). Junk URLs and photos that
+    fail to download are labeled "other" without spending an API call.
+
+    Results are cached by photo URL (Part 4): photos already classified in a
+    prior import are served from `photo_classification_cache` and never re-sent
+    to the model. Only genuine API classifications are cached — junk URLs, failed
+    downloads, and batch errors fall back to "other" but are NOT cached (so a
+    transient failure can't poison the cache permanently).
+
+    Real per-provider token usage is aggregated and logged to api_usage with the
+    actual model string, so model/cost comparisons are exact.
 
     Args:
         photo_urls:  List of photo URLs to classify
         max_photos:  Maximum number to classify (saves cost)
-        concurrency: How many to classify simultaneously
+        concurrency: How many batches to classify simultaneously
+        user_id:     For usage attribution in api_usage (optional)
 
     Returns:
-        List of dicts: [{"url": "...", "label": "exterior_front"}, ...]
+        List of dicts in original order: [{"url": "...", "label": "exterior_front"}, ...]
     """
-    # Only classify up to max_photos
-    urls_to_classify = photo_urls[:max_photos]
+    from app.core.database import AsyncSessionLocal
+    from app.models.photo_classification_cache import (
+        PhotoClassificationCache,
+        hash_photo_url,
+    )
+    from sqlmodel import select
 
-    # Use a semaphore to limit concurrent API calls
+    urls_to_classify = photo_urls[:max_photos]
+    if not urls_to_classify:
+        return []
+    labels: dict = {}
+
+    # ── Cache lookup first (one query) ─────────────────────────
+    hashes = [hash_photo_url(url) for url in urls_to_classify]
+    cached: dict = {}
+    try:
+        async with AsyncSessionLocal() as session:
+            result = await session.exec(
+                select(PhotoClassificationCache).where(
+                    PhotoClassificationCache.url_hash.in_(hashes)
+                )
+            )
+            for row in result.all():
+                cached[row.url_hash] = row.category
+    except Exception as e:
+        print(f"[classify] cache lookup failed (non-fatal): {e}")
+
+    uncached = []
+    for url, h in zip(urls_to_classify, hashes):
+        if h in cached:
+            labels[url] = cached[h]
+        else:
+            uncached.append(url)
+
+    if not uncached:
+        print(f"Classified {len(urls_to_classify)} photos — all {len(urls_to_classify)} served from cache")
+        return [{"url": url, "label": labels.get(url, "other")} for url in urls_to_classify]
+
+    # Pre-filter known junk URLs → "other", no API call, not cached.
+    to_process = []
+    for url in uncached:
+        if _is_junk_url(url):
+            labels[url] = "other"
+        else:
+            to_process.append(url)
+
+    # Downsample everything first (concurrent). Failed fetches → "other", not cached.
+    downsampled = await asyncio.gather(
+        *[fetch_and_downsample(url) for url in to_process]
+    )
+    valid_pairs = []
+    for url, b64 in zip(to_process, downsampled):
+        if b64:
+            valid_pairs.append((url, b64))
+        else:
+            labels[url] = "other"
+
+    # Batch into groups of BATCH_SIZE — one API call per batch.
+    batches = [
+        valid_pairs[i:i + BATCH_SIZE]
+        for i in range(0, len(valid_pairs), BATCH_SIZE)
+    ]
     sem = asyncio.Semaphore(concurrency)
 
-    async def classify_with_sem(url: str) -> dict:
+    async def run_batch(batch: list):
+        batch_urls = [p[0] for p in batch]
+        batch_b64s = [p[1] for p in batch]
+        out: dict = {}
+        usage = {"input_tokens": 0, "output_tokens": 0}
         async with sem:
-            label = await classify_photo(url)
-            return {"url": url, "label": label}
+            try:
+                classifications, usage = await classify_photo_batch_via_api(batch_b64s)
+            except Exception as e:
+                print(f"Batch classification failed: {e}")
+                # Don't lose the photos — mark "other", but NOT cacheable (transient).
+                return {url: "other" for url in batch_urls}, usage, False
 
-    results = await asyncio.gather(
-        *[classify_with_sem(url) for url in urls_to_classify]
+        for item in classifications:
+            idx = item.get("index")
+            category = item.get("category", "other")
+            if category not in VALID_CATEGORIES:
+                category = "other"
+            if isinstance(idx, int) and 1 <= idx <= len(batch_urls):
+                out[batch_urls[idx - 1]] = category
+
+        # Any photo the model skipped → other.
+        for url in batch_urls:
+            out.setdefault(url, "other")
+        return out, usage, True
+
+    batch_results = await asyncio.gather(*[run_batch(b) for b in batches])
+    total_in = 0
+    total_out = 0
+    to_cache = []  # (url, category) — genuine API results only
+    for out, usage, cacheable in batch_results:
+        labels.update(out)
+        total_in += usage.get("input_tokens", 0)
+        total_out += usage.get("output_tokens", 0)
+        if cacheable:
+            to_cache.extend(out.items())
+
+    provider = settings.photo_classifier_provider
+    model = settings.photo_classifier_model
+    print(
+        f"Classified {len(urls_to_classify)} photos "
+        f"({len(cached)} from cache, {len(valid_pairs)} classified in "
+        f"{len(batches)} batch call(s) of up to {BATCH_SIZE}, "
+        f"provider={provider}, model={model}) — tokens in={total_in} out={total_out}"
     )
 
-    return list(results)
+    # Log real usage (correct model + real tokens). quantity = photos actually
+    # sent to the API this call (cache hits are free). Skip if nothing hit the API.
+    if batches:
+        from app.services.analytics import record_api_usage
+        await record_api_usage(
+            "photo_classification",
+            user_id=user_id,
+            quantity=len(valid_pairs),
+            input_tokens=total_in,
+            output_tokens=total_out,
+            model=model,
+        )
+
+    # ── Persist to cache + purge stale rows, fire-and-forget ──
+    # Scheduled as a background task so the user NEVER waits on cache writes
+    # (bulk ON CONFLICT DO NOTHING insert + throttled >2-month purge).
+    if to_cache:
+        task = asyncio.create_task(_persist_and_purge_cache(to_cache))
+        _cache_bg_tasks.add(task)
+        task.add_done_callback(_cache_bg_tasks.discard)
+
+    # Preserve original order and the {"url","label"} contract.
+    return [{"url": url, "label": labels.get(url, "other")} for url in urls_to_classify]
 
 
 # ── Sort into walkaround sequence ─────────────────────────────
