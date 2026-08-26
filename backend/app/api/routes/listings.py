@@ -187,7 +187,7 @@ Write about what the car offers the buyer. Never write from a private owner's pe
 
 Respond with ONLY valid JSON: {{"title": "...", "description": "...", "tags": [...]}}"""
 
-    async def _call_claude(retry_note: str = "") -> dict:
+    async def _call_claude(retry_note: str = ""):
         msg = await _client.messages.create(
             model="claude-sonnet-4-6",
             max_tokens=1000,
@@ -196,13 +196,15 @@ Respond with ONLY valid JSON: {{"title": "...", "description": "...", "tags": [.
         )
         raw = msg.content[0].text.strip()
         raw = raw.replace("```json", "").replace("```", "").strip()
-        return json.loads(raw)
+        # Return usage too — `msg` is local to this helper, so the caller can't
+        # read it out of scope (that NameError 500'd every marketplace caption).
+        return json.loads(raw), getattr(msg, "usage", None)
 
-    data = await _call_claude()
+    data, usage = await _call_claude()
 
     # Hard check — if ownership language slipped through, retry once with an explicit note
     if _has_ownership_language(data.get("description", "")):
-        data = await _call_claude(
+        data, usage = await _call_claude(
             retry_note=(
                 "\nNOTE: Do not use 'I've', 'I have', 'selling my', 'my car', or any language "
                 "implying you personally own or have history with this vehicle. "
@@ -222,7 +224,7 @@ Respond with ONLY valid JSON: {{"title": "...", "description": "...", "tags": [.
     if tagline:
         description = description.rstrip() + f"\n\n{tagline}"
 
-    _u = getattr(msg, "usage", None)
+    _u = usage
     await record_api_usage("marketplace_caption", user_id=current_user.id,
         input_tokens=getattr(_u, "input_tokens", None),
         output_tokens=getattr(_u, "output_tokens", None), model="claude-sonnet-4-6")
