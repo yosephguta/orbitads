@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 from datetime import datetime, timezone
 from typing import Annotated
@@ -375,7 +376,12 @@ async def _run_pipeline(job_id: int, user_id: int):
                 # Webhook didn't fire (dev, or missed) — fallback polling got the URL
                 final_bytes = await download_render(fallback_url)
                 final_key = make_final_video_key(job_id)
-                upload_bytes(final_bytes, final_key, "video/mp4")
+                # Run the synchronous boto3 upload in a thread so the multi-MB
+                # PUT doesn't block the event loop (bug #49). On the single-worker
+                # dev server that freeze stalled every concurrent request — incl.
+                # the extension's /auth/me and job polls — showing a spurious
+                # logout + stuck-at-assembling until the upload finished.
+                await asyncio.to_thread(upload_bytes, final_bytes, final_key, "video/mp4")
                 presigned_url = create_presigned_download_url(final_key, expires_in=604800)
 
                 try:
@@ -505,7 +511,8 @@ async def _process_shotstack_webhook(payload: dict):
         try:
             final_bytes   = await download_render(video_url)
             final_key     = make_final_video_key(job.id)
-            upload_bytes(final_bytes, final_key, "video/mp4")
+            # Upload off the event loop (bug #49) so the PUT doesn't block other requests.
+            await asyncio.to_thread(upload_bytes, final_bytes, final_key, "video/mp4")
             presigned_url = create_presigned_download_url(final_key, expires_in=604800)
 
             try:

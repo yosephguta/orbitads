@@ -267,15 +267,17 @@ async def wait_for_render(
 # ── Webhook-first wait (fallback poll) ───────────────────────
 async def wait_for_render_with_fallback(
     render_id:     str,
-    poll_interval: int = 15,    # longer interval — webhook should fire first in prod
+    poll_interval: Optional[int] = None,  # None → env-aware (see below)
     max_wait:      int = 1200,  # 20 minute ceiling
 ) -> Optional[str]:
     """
     Wait for a Shotstack render with webhook as the primary signal.
 
     In production, Shotstack POSTs to our webhook the moment rendering finishes,
-    so this fallback poll rarely runs. In dev (localhost), the webhook can't reach
-    us so this always polls through.
+    so this fallback poll rarely runs — keep it slow (15s) to avoid redundant
+    Shotstack polls at scale. In dev (localhost) the webhook can't reach us, so
+    this poll IS the only completion signal — use a short 5s interval so the
+    extension sees the finished video quickly instead of ~15s+ late.
 
     Returns the video URL if fallback polling detected completion.
     Returns None if the webhook already completed the job.
@@ -283,6 +285,9 @@ async def wait_for_render_with_fallback(
     from sqlmodel import select
     from app.core.database import AsyncSessionLocal
     from app.models.job import Job, JobStatus
+
+    if poll_interval is None:
+        poll_interval = 5 if settings.environment == "development" else 15
 
     elapsed = 0
     while elapsed < max_wait:
