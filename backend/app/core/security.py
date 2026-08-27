@@ -136,3 +136,41 @@ async def get_current_user(
         print(f"Failed to record extension version: {e}")
 
     return user
+
+
+# ── Role-scoped dependencies (for the admin/manager dashboards) ───
+# Built on get_current_user so they inherit auth + extension-version capture.
+# Routes in later parts depend on these instead of get_current_user so the
+# role check happens once, in one place.
+async def get_current_admin(
+    current_user=Depends(get_current_user),
+):
+    """
+    Require an admin. Returns the User on success, raises 403 otherwise.
+    Drop into any /admin/* route via Depends(get_current_admin).
+    """
+    if current_user.role != "admin":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Admin access required.",
+        )
+    return current_user
+
+
+async def get_current_manager(
+    current_user=Depends(get_current_user),
+):
+    """
+    Require a dealership manager. Returns the User on success, raises 403
+    otherwise. A manager with no dealership_id yet (signed up but not assigned)
+    is rejected rather than silently scoped to nothing.
+
+    Manager routes in later parts MUST read dealership_id from this returned
+    User — never accept a dealership_id from the request.
+    """
+    if current_user.role != "manager" or current_user.dealership_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Manager access required.",
+        )
+    return current_user

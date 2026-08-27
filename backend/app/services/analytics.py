@@ -1,5 +1,5 @@
 from __future__ import annotations
-from datetime import datetime, timezone
+from datetime import datetime
 from typing import Optional
 from sqlmodel.ext.asyncio.session import AsyncSession
 from app.models.ad_event import AdEvent
@@ -143,7 +143,13 @@ async def track_posting(
 
     time_since_hours = None
     if job_created_at:
-        delta = now - job_created_at.replace(tzinfo=timezone.utc)
+        # `now` is naive UTC. job_created_at may arrive naive (SQLite dev) OR
+        # timezone-aware UTC (some prod tables are `timestamp WITH time zone`,
+        # and asyncpg returns aware datetimes for those). Strip tzinfo so both
+        # operands are naive-UTC — the old code did the opposite (forced tzinfo
+        # ON), which raised "can't subtract offset-naive and offset-aware
+        # datetimes". Matches the defensive .replace(tzinfo=None) at jobs.py.
+        delta = now - job_created_at.replace(tzinfo=None)
         time_since_hours = round(delta.total_seconds() / 3600, 2)
 
     event = AdEvent(

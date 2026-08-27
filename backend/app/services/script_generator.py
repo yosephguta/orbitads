@@ -56,6 +56,7 @@ async def generate_ad_script(
     include_cta: bool = True,
     price: Optional[str] = None,
     language: str = 'en',
+    user_id: Optional[int] = None,
 ) -> dict:
     """
     Generate a 30-second ad script for a vehicle using Claude.
@@ -169,6 +170,24 @@ Return ONLY a JSON object with these exact keys. No markdown, no explanation, ju
             ],
             timeout=60.0,  # fail fast instead of hanging (SDK default is 10 min)
         )
+
+        # Log paid-API usage (fire-and-forget, never raises). Real token counts
+        # from msg.usage, getattr-guarded so logging can't break the pipeline.
+        # Logged here (right after the billed call returns) so a downstream JSON
+        # parse failure still records the cost we actually incurred.
+        try:
+            from app.services.analytics import record_api_usage
+            _u = getattr(message, "usage", None)
+            await record_api_usage(
+                "video_script_generation",
+                user_id=user_id,
+                quantity=1,
+                input_tokens=getattr(_u, "input_tokens", None),
+                output_tokens=getattr(_u, "output_tokens", None),
+                model="claude-sonnet-4-6",
+            )
+        except Exception as usage_err:  # noqa: BLE001
+            print(f"[usage] video_script_generation log failed: {usage_err}")
 
         raw = message.content[0].text.strip()
 

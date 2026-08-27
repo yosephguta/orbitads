@@ -16,6 +16,8 @@ TTS flow:
   script text + voice_id → ElevenLabs returns MP3 bytes → save to S3
 """
 
+from typing import Optional
+
 import httpx
 from app.core.config import get_settings
 
@@ -94,6 +96,7 @@ async def text_to_speech(
     text: str,
     voice_id: str,
     model_id: str = "eleven_turbo_v2",
+    user_id: Optional[int] = None,
 ) -> bytes:
     """
     Convert text to speech using a cloned voice.
@@ -146,6 +149,22 @@ async def text_to_speech(
             raise RuntimeError(
                 f"ElevenLabs TTS failed: {response.status_code} {response.text}"
             )
+
+        # Log paid-API usage (fire-and-forget, never raises). ElevenLabs bills
+        # per character, so quantity = character count of the text sent — not a
+        # flat 1. No token concept here, so input/output_tokens stay None.
+        try:
+            from app.services.analytics import record_api_usage
+            await record_api_usage(
+                "voice_tts",
+                user_id=user_id,
+                quantity=len(text or ""),
+                input_tokens=None,
+                output_tokens=None,
+                model=model_id,
+            )
+        except Exception as usage_err:  # noqa: BLE001
+            print(f"[usage] voice_tts log failed: {usage_err}")
 
         # Response body is the raw MP3 bytes
         return response.content

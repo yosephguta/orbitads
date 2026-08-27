@@ -76,6 +76,11 @@ async def register(
 
     signup_plan = payload.signup_plan if payload.signup_plan in ('individual', 'dealership') else 'individual'
 
+    # Dealership-plan signups become managers (they'll own a Dealership + team
+    # in later parts); everyone else is a salesperson. Only the dealership path
+    # changes here — the individual path keeps the prior default.
+    role = "manager" if signup_plan == "dealership" else "salesperson"
+
     token = str(uuid.uuid4())
     user = User(
         email=payload.email.lower().strip(),
@@ -85,7 +90,7 @@ async def register(
         dealership_name=payload.dealership_name or '',
         hashed_password=hash_password(payload.password),
         phone_number=payload.phone_number or None,
-        role="salesperson",
+        role=role,
         subscription_status="trial",
         signup_plan=signup_plan,
         trial_ends_at=datetime.utcnow() + timedelta(days=7),

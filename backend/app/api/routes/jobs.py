@@ -33,7 +33,7 @@ from app.services.s3 import (
     get_audio_duration,
 )
 from app.services.audio_utils import get_audio_level, calculate_volume_multiplier
-from app.services.analytics import track_generation
+from app.services.analytics import track_generation, record_api_usage
 
 router = APIRouter(
     prefix="/jobs",
@@ -201,6 +201,7 @@ async def _run_pipeline(job_id: int, user_id: int):
                 include_cta=(job_video_type != "with_outro"),
                 price=job_price or None,
                 language=job_language,
+                user_id=user_id,
             )
         await _update_job_safe(job_id, generated_script=json.dumps(script), progress_pct=50)
     except Exception as e:
@@ -237,6 +238,7 @@ async def _run_pipeline(job_id: int, user_id: int):
         audio_bytes = await text_to_speech(
             text=script["full_script"],
             voice_id=effective_voice_id,
+            user_id=user_id,
         )
 
         # Normalize voiceover loudness to -22 dBFS (quieter for video)
@@ -384,6 +386,23 @@ async def _run_pipeline(job_id: int, user_id: int):
                 await asyncio.to_thread(upload_bytes, final_bytes, final_key, "video/mp4")
                 presigned_url = create_presigned_download_url(final_key, expires_in=604800)
 
+                # Log the render cost (fallback-completion path — the dev path,
+                # and any prod job whose webhook didn't deliver the URL). quantity
+                # is the same render-duration value that feeds AdEvent.render_time_seconds
+                # (now - job_created_at), so the two numbers agree. The webhook
+                # path logs the same call_type at its own upload site (bug #49
+                # touched both; so does this).
+                try:
+                    render_secs = int((datetime.utcnow() - job_created_at.replace(tzinfo=None)).total_seconds())
+                    await record_api_usage(
+                        "video_render",
+                        user_id=user_id,
+                        quantity=render_secs,
+                        model=None,
+                    )
+                except Exception as usage_err:
+                    print(f"[usage] video_render (fallback) log failed: {usage_err}")
+
                 try:
                     await delete_render(render_id)
                 except Exception:
@@ -514,6 +533,23 @@ async def _process_shotstack_webhook(payload: dict):
             # Upload off the event loop (bug #49) so the PUT doesn't block other requests.
             await asyncio.to_thread(upload_bytes, final_bytes, final_key, "video/mp4")
             presigned_url = create_presigned_download_url(final_key, expires_in=604800)
+
+            # Log the render cost (webhook-completion path — the prod path).
+            # Same render-duration value (now - job.created_at) that feeds
+            # AdEvent.render_time_seconds, so the two agree. Mirrors the
+            # fallback-path logging above — both completion paths log video_render.
+            try:
+                # .replace(tzinfo=None): job.created_at may be aware in prod
+                # (some tables are `timestamp WITH time zone`), naive in dev.
+                render_secs = int((datetime.utcnow() - job.created_at.replace(tzinfo=None)).total_seconds())
+                await record_api_usage(
+                    "video_render",
+                    user_id=job.user_id,
+                    quantity=render_secs,
+                    model=None,
+                )
+            except Exception as usage_err:
+                print(f"[usage] video_render (webhook) log failed: {usage_err}")
 
             try:
                 await delete_render(render_id)
