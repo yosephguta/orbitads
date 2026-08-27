@@ -18,11 +18,108 @@ settings = get_settings()
 resend.api_key = settings.resend_api_key
 
 
-async def send_weekly_reports():
-    today       = datetime.now(timezone.utc)
+def last_week_window(now: datetime = None) -> tuple:
+    """
+    The trailing Mon 00:00 → next Mon 00:00 (UTC) window the weekly report
+    covers. Extracted so the cron script and the on-demand admin route share
+    exactly one definition of "last week".
+    """
+    today       = now or datetime.now(timezone.utc)
     last_monday = today - timedelta(days=today.weekday() + 7)
     week_start  = last_monday.replace(hour=0, minute=0, second=0, microsecond=0)
     week_end    = week_start + timedelta(days=7)
+    return week_start, week_end
+
+
+async def send_dealership_weekly_report(
+    session,
+    dealership,
+    week_start: datetime,
+    week_end:   datetime,
+) -> dict:
+    """
+    Build + send the manager (team leaderboard) report for a SINGLE dealership
+    and return a summary of what happened. This is the reusable unit — both
+    the full cron loop (send_weekly_reports) and the on-demand admin route call
+    it, so the query/email-building logic lives in exactly one place.
+
+    Returns a summary dict: sent flag, recipient, date range, and the counts
+    the report itself contains (so the admin route can echo them back). Never
+    raises — email/query failures are captured into the summary.
+    """
+    summary = {
+        'dealership_id':   dealership.id,
+        'dealership_name': dealership.dealership_name,
+        'week_start':      week_start.isoformat(),
+        'week_end':        week_end.isoformat(),
+        'sent':            False,
+        'recipient':       None,
+        'skipped_reason':  None,
+        'staff_count':     0,
+        'total_generated': 0,
+        'total_posted':    0,
+        'total_sold':      0,
+    }
+
+    if not dealership.manager_user_id:
+        summary['skipped_reason'] = 'no_manager'
+        return summary
+
+    manager = await session.get(User, dealership.manager_user_id)
+    if not manager or not manager.email:
+        summary['skipped_reason'] = 'no_manager_email'
+        return summary
+
+    staff_result = await session.exec(
+        select(User).where(User.dealership_id == dealership.id)
+    )
+    staff = staff_result.all()
+    if not staff:
+        summary['skipped_reason'] = 'no_staff'
+        summary['recipient'] = manager.email
+        return summary
+
+    staff_stats = []
+    for member in staff:
+        stats = await get_user_weekly_stats(
+            session    = session,
+            user_id    = member.id,
+            week_start = week_start,
+            week_end   = week_end,
+        )
+        staff_stats.append({'user': member, 'stats': stats})
+
+    summary['staff_count']     = len(staff_stats)
+    summary['total_generated'] = sum(s['stats']['total_generated'] for s in staff_stats)
+    summary['total_posted']    = sum(s['stats']['total_posted']    for s in staff_stats)
+    summary['total_sold']      = sum(s['stats']['vehicles_sold']   for s in staff_stats)
+    summary['recipient']       = manager.email
+
+    html = format_manager_report_email(
+        manager     = manager,
+        dealership  = dealership,
+        staff_stats = staff_stats,
+        week_start  = week_start,
+    )
+
+    try:
+        resend.Emails.send({
+            'from':    'DealersOrbit <reports@mail.dealersorbit.com>',
+            'to':      [manager.email],
+            'subject': f'Team Report — {dealership.dealership_name} — {week_start.strftime("%b %d")}',
+            'html':    html,
+        })
+        summary['sent'] = True
+        print(f'Sent manager report to {manager.email} for {dealership.dealership_name}')
+    except Exception as e:
+        summary['error'] = str(e)
+        print(f'Failed to send manager report for dealership {dealership.id}: {e}')
+
+    return summary
+
+
+async def send_weekly_reports():
+    week_start, week_end = last_week_window()
 
     print(f'Sending weekly reports for {week_start.date()} to {week_end.date()}')
 
@@ -68,50 +165,9 @@ async def send_weekly_reports():
         dealerships        = dealerships_result.all()
 
         for dealership in dealerships:
-            if not dealership.manager_user_id:
-                continue
-
-            try:
-                manager = await session.get(User, dealership.manager_user_id)
-                if not manager or not manager.email:
-                    continue
-
-                staff_result = await session.exec(
-                    select(User).where(User.dealership_id == dealership.id)
-                )
-                staff = staff_result.all()
-
-                if not staff:
-                    continue
-
-                staff_stats = []
-                for member in staff:
-                    stats = await get_user_weekly_stats(
-                        session    = session,
-                        user_id    = member.id,
-                        week_start = week_start,
-                        week_end   = week_end,
-                    )
-                    staff_stats.append({'user': member, 'stats': stats})
-
-                html = format_manager_report_email(
-                    manager     = manager,
-                    dealership  = dealership,
-                    staff_stats = staff_stats,
-                    week_start  = week_start,
-                )
-
-                resend.Emails.send({
-                    'from':    'DealersOrbit <reports@mail.dealersorbit.com>',
-                    'to':      [manager.email],
-                    'subject': f'Team Report — {dealership.dealership_name} — {week_start.strftime("%b %d")}',
-                    'html':    html,
-                })
-
-                print(f'Sent manager report to {manager.email} for {dealership.dealership_name}')
-
-            except Exception as e:
-                print(f'Failed to send manager report for dealership {dealership.id}: {e}')
+            # All the per-dealership logic now lives in one reusable function
+            # (also called by the on-demand admin route) — never fork it here.
+            await send_dealership_weekly_report(session, dealership, week_start, week_end)
 
         print(f'Weekly reports complete. Sent {sent_count} individual reports.')
 

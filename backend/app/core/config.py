@@ -65,6 +65,13 @@ class Settings(BaseSettings):
     # ── Email (Resend) ────────────────────────────────────────────
     resend_api_key: str = ""
 
+    # ── Failure-rate alerting (Part 3) ────────────────────────────
+    # Fraction of generations that may fail in the trailing window before an
+    # alert fires. Overridable via env ALERT_FAILURE_RATE_THRESHOLD.
+    alert_failure_rate_threshold: float = 0.3
+    # Don't alert on tiny samples — a 100% rate over 2 events isn't a signal.
+    alert_min_sample_size: int = 5
+
     # ── Stripe ────────────────────────────────────────────────────
     stripe_secret_key: str
     stripe_webhook_secret: str

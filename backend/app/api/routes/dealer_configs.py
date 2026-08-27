@@ -267,48 +267,12 @@ async def get_config(
     return platform
 
 
-@router.post('/{platform_id}/approve')
-async def approve_config(
-    platform_id: int,
-    current_user: Annotated[User, Depends(get_current_user)],
-    session: Annotated[AsyncSession, Depends(get_session)],
-):
-    platform = await session.get(DealerPlatform, platform_id)
-    if not platform:
-        raise HTTPException(status_code=404, detail='Config not found')
-
-    platform.status = 'active'
-    platform.reviewed_at = datetime.utcnow()
-    platform.reviewed_by = current_user.email
-
-    session.add(platform)
-    await session.commit()
-
-    return {
-        'message': f'Config {platform_id} approved and now active',
-        'platform_id': platform_id,
-        'platform_slug': platform.platform_slug,
-        'source_url': platform.source_url,
-    }
-
-
-@router.post('/{platform_id}/reject')
-async def reject_config(
-    platform_id: int,
-    current_user: Annotated[User, Depends(get_current_user)],
-    session: Annotated[AsyncSession, Depends(get_session)],
-):
-    platform = await session.get(DealerPlatform, platform_id)
-    if not platform:
-        raise HTTPException(status_code=404, detail='Config not found')
-
-    platform.status = 'rejected'
-    platform.reviewed_at = datetime.utcnow()
-    platform.reviewed_by = current_user.email
-
-    session.add(platform)
-    await session.commit()
-    return {'message': f'Config {platform_id} rejected'}
+# NOTE: approve / reject moved to admin.py under /admin/dealer-platforms/* and
+# re-gated behind get_current_admin (Part 3). They were previously here gated by
+# get_current_user — i.e. ANY logged-in user could activate a scraping config,
+# which is the security gap Part 3 closes. The review-queue list also lives
+# there now (GET /admin/dealer-platforms?status=...). This file keeps only the
+# extension-facing / generation endpoints.
 
 
 @router.post('/{platform_id}/flag-manual')
