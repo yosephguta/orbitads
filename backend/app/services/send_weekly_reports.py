@@ -23,8 +23,14 @@ def last_week_window(now: datetime = None) -> tuple:
     The trailing Mon 00:00 → next Mon 00:00 (UTC) window the weekly report
     covers. Extracted so the cron script and the on-demand admin route share
     exactly one definition of "last week".
+
+    Returns NAIVE-UTC datetimes: week_start/week_end are bound as filter params
+    against AdEvent.created_at (TIMESTAMP WITHOUT TIME ZONE) in
+    get_user_weekly_stats — asyncpg rejects AWARE datetimes there in prod
+    (CLAUDE.md bug #24; dev SQLite tolerated the old aware value, which is why
+    this was never caught until the cron actually ran).
     """
-    today       = now or datetime.now(timezone.utc)
+    today       = now or datetime.utcnow()
     last_monday = today - timedelta(days=today.weekday() + 7)
     week_start  = last_monday.replace(hour=0, minute=0, second=0, microsecond=0)
     week_end    = week_start + timedelta(days=7)

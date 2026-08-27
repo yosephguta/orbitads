@@ -51,9 +51,12 @@ async def check_failure_rate(
     if min_sample_size is None:
         min_sample_size = settings.alert_min_sample_size
 
-    # Aware UTC cutoff — matches the weekly-report filtering pattern and is
-    # correct against prod's timestamptz ad_events column (CLAUDE.md #54).
-    cutoff = datetime.now(timezone.utc) - timedelta(minutes=window_minutes)
+    # NAIVE UTC cutoff. It's bound as a filter param against ad_events.created_at,
+    # which SQLAlchemy casts to TIMESTAMP WITHOUT TIME ZONE — asyncpg cannot
+    # encode an AWARE datetime there and raises "can't subtract offset-naive and
+    # offset-aware datetimes" (prod-only; dev SQLite tolerates aware). CLAUDE.md
+    # bug #24: bind naive datetime.utcnow()-based values for these columns.
+    cutoff = datetime.utcnow() - timedelta(minutes=window_minutes)
 
     async with AsyncSessionLocal() as session:
         generated = (

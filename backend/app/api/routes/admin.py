@@ -629,12 +629,16 @@ async def reject_dealer_platform(
 # ── STEP 3: Live analytics endpoints ──────────────────────────
 def _parse_since(since: Optional[str]) -> datetime:
     """
-    Parse the `since` ISO date/datetime param → aware-UTC datetime. Default =
-    now - 7 days. Aware UTC matches the weekly-report filtering pattern and is
-    correct against prod's timestamptz columns (CLAUDE.md #54).
+    Parse the `since` ISO date/datetime param → NAIVE-UTC datetime. Default =
+    now - 7 days.
+
+    Must be naive: it's bound as a filter against AdEvent/ApiUsage.created_at,
+    which SQLAlchemy casts to TIMESTAMP WITHOUT TIME ZONE — asyncpg rejects an
+    AWARE datetime there (prod-only DataError; dev SQLite tolerates it).
+    CLAUDE.md bug #24. A tz-aware ISO input is converted to UTC then stripped.
     """
     if not since:
-        return datetime.now(timezone.utc) - timedelta(days=7)
+        return datetime.utcnow() - timedelta(days=7)
     try:
         dt = datetime.fromisoformat(since)
     except ValueError:
@@ -642,8 +646,8 @@ def _parse_since(since: Optional[str]) -> datetime:
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="`since` must be ISO format, e.g. 2026-08-01 or 2026-08-01T00:00:00.",
         )
-    if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=timezone.utc)
+    if dt.tzinfo is not None:
+        dt = dt.astimezone(timezone.utc).replace(tzinfo=None)
     return dt
 
 
