@@ -20,6 +20,21 @@ settings = get_settings()
 # max_overflow=20  → allow up to 20 extra connections under heavy load
 # pool_pre_ping    → test each connection before using it (drops stale ones)
 # echo=debug       → log every SQL statement in development (set to False in prod)
+#
+# timezone=UTC (connect_args): every connection runs with session TimeZone=UTC.
+# The codebase's convention is naive-UTC datetimes at the DB boundary (bug #24).
+# For `timestamp WITH time zone` columns (prod's ad_events/jobs from the June-2026
+# SQLite→PG migration), Postgres casts a bound naive value USING the session
+# TimeZone — so if the session weren't UTC (e.g. a dev Mac defaulting to
+# America/New_York), a naive utcnow() would be stored at the wrong instant and
+# read back shifted by the local offset (bug #56). Prod RDS already defaults to
+# UTC; pinning it here makes that explicit and immune to OS/RDS-param drift, in
+# both envs. asyncpg-only knob, so only pass it on Postgres.
+_connect_args = (
+    {"server_settings": {"timezone": "UTC"}}
+    if "postgresql" in settings.database_url
+    else {}
+)
 engine = create_async_engine(
     settings.database_url,
     echo=settings.debug,
@@ -27,6 +42,7 @@ engine = create_async_engine(
     max_overflow=20,
     pool_pre_ping=True,
     pool_recycle=300,  # recycle connections every 5 min — prevents NAT/PG idle timeout drops
+    connect_args=_connect_args,
 )
 
 # ── Session factory ───────────────────────────────────────────

@@ -4,7 +4,8 @@ uvicorn[standard]==0.32.1        # the server that runs FastAPI
 
 # ── Database ──────────────────────────────────────────────────
 sqlmodel>=0.0.22               # ORM — models are also Pydantic schemas
-aiosqlite==0.20.0                # async PostgreSQL driver
+asyncpg==0.31.0                  # async PostgreSQL driver (dev + prod)
+aiosqlite==0.20.0                # async SQLite driver (legacy fallback only — dev now uses Postgres)
 alembic==1.14.0                  # database migrations (Phase 4)
 
 # ── Auth ──────────────────────────────────────────────────────
