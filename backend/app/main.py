@@ -37,6 +37,7 @@ from app.api.routes import auth, jobs, uploads, photos, listings, billing, outro
 from app.api.routes.dealer_configs import router as dealer_configs_router
 from app.api.routes.saved_scripts import router as saved_scripts_router
 from app.api.routes.admin import router as admin_router
+from app.api.routes.manager import router as manager_router
 app.include_router(auth.router,           prefix="/api/v1")
 app.include_router(uploads.router,        prefix="/api/v1")
 app.include_router(jobs.router,           prefix="/api/v1")
@@ -48,6 +49,7 @@ app.include_router(outros.router,         prefix="/api/v1")
 app.include_router(dealer_configs_router, prefix="/api/v1")
 app.include_router(saved_scripts_router,  prefix="/api/v1")
 app.include_router(admin_router,          prefix="/api/v1")
+app.include_router(manager_router,        prefix="/api/v1")
 
 @app.get("/health", tags=["infra"])
 async def health():

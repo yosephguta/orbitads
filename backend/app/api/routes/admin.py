@@ -93,6 +93,10 @@ class PlanGrantBody(BaseModel):
     subscription_status: Optional[str] = None
 
 
+class AssignToDealershipBody(BaseModel):
+    dealership_id: int
+
+
 # ── Helpers ───────────────────────────────────────────────────
 def _validate_plan_status(plan: Optional[str], status_val: Optional[str]) -> None:
     """Reject unknown plan/status values so a typo can't write garbage."""
@@ -623,6 +627,57 @@ async def reject_dealer_platform(
         "platform_id": platform_id,
         "status": platform.status,
         "reason_stored_in_notes": bool(payload.reason),
+    }
+
+
+@router.post("/dealer-platforms/{platform_id}/assign-to-dealership")
+async def assign_platform_to_dealership(
+    platform_id: int,
+    payload: AssignToDealershipBody,
+    session: Annotated[SQLModelAsyncSession, Depends(get_session)],
+    _admin: Annotated[User, Depends(get_current_admin)],
+):
+    """
+    Link an approved config to a dealership: sets dealership.platform_id.
+
+    Approval and assignment are deliberately separate steps — approve() only
+    flips a config to 'active', it does NOT touch dealership rows (see its
+    docstring). This route is the assignment half. It REQUIRES the platform to
+    be 'active' first: assigning a still-pending or rejected config would put a
+    dealership live on scraping logic no admin has vetted, so we reject that
+    with a clear message rather than silently linking it.
+
+    404 if either the platform or the dealership id doesn't exist.
+    """
+    platform = await session.get(DealerPlatform, platform_id)
+    if not platform:
+        raise HTTPException(status_code=404, detail="Config not found.")
+
+    dealership = await session.get(Dealership, payload.dealership_id)
+    if not dealership:
+        raise HTTPException(status_code=404, detail="Dealership not found.")
+
+    if platform.status != "active":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                f"Config {platform_id} is '{platform.status}', not 'active'. "
+                "Approve it first — assignment does not skip approval."
+            ),
+        )
+
+    dealership.platform_id = platform.id
+    session.add(dealership)
+    await session.commit()
+
+    return {
+        "message": (
+            f"Config {platform_id} assigned to dealership "
+            f"{dealership.id} ({dealership.dealership_name})"
+        ),
+        "dealership_id": dealership.id,
+        "platform_id": platform.id,
+        "platform_status": platform.status,
     }
 
 
