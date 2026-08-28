@@ -12,13 +12,22 @@ async def get_audio_level(s3_key: str) -> Optional[float]:
     """Download audio/video from S3 and return average dBFS level."""
     try:
         import boto3
+        from botocore.config import Config
         from pydub import AudioSegment
 
+        # Same connection-drop retry hardening as app/services/s3.py — this download
+        # is non-fatal (we fall back to a default level), but retrying cuts down on
+        # transient ConnectionClosedError fallbacks.
         s3 = boto3.client(
             "s3",
             aws_access_key_id=settings.aws_access_key_id,
             aws_secret_access_key=settings.aws_secret_access_key,
             region_name=settings.aws_region,
+            config=Config(
+                retries={"max_attempts": 5, "mode": "standard"},
+                connect_timeout=15,
+                read_timeout=120,
+            ),
         )
         obj = s3.get_object(Bucket=settings.s3_bucket_name, Key=s3_key)
         data = obj["Body"].read()

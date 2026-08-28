@@ -17,7 +17,7 @@ import httpx
 from datetime import datetime, timezone
 from typing import Annotated, Optional
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
@@ -324,42 +324,66 @@ async def mark_posted(
     listing_id: int,
     current_user: Annotated[User, Depends(get_current_user)],
     session: Annotated[AsyncSession, Depends(get_session)],
+    record_event: bool = Query(
+        True,
+        description=(
+            "Whether to also record a posted_marketplace analytics event. "
+            "This endpoint's real job is registering the listing for sold-checking "
+            "(fb_posted=True) — one entry per VIN's listing. The posted_marketplace "
+            "EVENT recording is a legacy side effect: older extensions relied on it "
+            "(they had no separate marketplace track-posting call), so it defaults "
+            "True for backward-compat. Newer extensions pass record_event=false here "
+            "and record the channel event via /track-posting instead — that's what "
+            "stops FB Post / FB Groups posts (which also call this to register the "
+            "sold-check) from double-logging a spurious posted_marketplace."
+        ),
+    ),
 ):
-    """Mark a listing as posted to Facebook Marketplace."""
+    """
+    Register a listing for sold-checking (mark fb_posted). Idempotent: calling it
+    again for a VIN whose listing is already posted does NOT create a second
+    sold-check entry and preserves the ORIGINAL fb_posted_at (the first channel
+    it went live on). The sold-checker keys off this listing row's stored
+    listing_url (the dealer VDP captured at import), never a Facebook URL.
+    """
     listing = await session.get(Listing, listing_id)
     if not listing or listing.user_id != current_user.id:
         raise HTTPException(status_code=404, detail="Listing not found")
 
-    listing.fb_posted    = True
-    listing.fb_posted_at = datetime.utcnow()
-    listing.updated_at   = datetime.utcnow()
+    already_posted = listing.fb_posted
+    if not already_posted:
+        listing.fb_posted    = True
+        listing.fb_posted_at = datetime.utcnow()   # preserve FIRST post time
+    listing.updated_at = datetime.utcnow()
     session.add(listing)
     await session.commit()
 
-    try:
-        vehicle_data = {
-            'year':    listing.year,
-            'make':    listing.make,
-            'model':   listing.model,
-            'price':   listing.price,
-            'mileage': listing.mileage,
-        }
-        await track_posting(
-            session      = session,
-            user         = current_user,
-            event_type   = 'posted_marketplace',
-            listing_id   = listing.id,
-            vehicle_data = vehicle_data,
-        )
-    except Exception as e:
-        print(f'Analytics tracking failed (non-fatal): {e}')
+    if record_event:
+        try:
+            vehicle_data = {
+                'year':    listing.year,
+                'make':    listing.make,
+                'model':   listing.model,
+                'price':   listing.price,
+                'mileage': listing.mileage,
+            }
+            await track_posting(
+                session      = session,
+                user         = current_user,
+                event_type   = 'posted_marketplace',
+                listing_id   = listing.id,
+                vehicle_data = vehicle_data,
+            )
+        except Exception as e:
+            print(f'Analytics tracking failed (non-fatal): {e}')
 
-    return {"success": True}
+    return {"success": True, "already_posted": already_posted, "recorded_event": record_event}
 
 
 class PostingEventRequest(BaseModel):
     event_type:    str
     listing_id:    Optional[int] = None
+    vin:           Optional[str] = None
     groups_count:  int           = 0
     vehicle_year:  Optional[str] = None
     vehicle_make:  Optional[str] = None
@@ -373,8 +397,30 @@ async def track_posting_event(
     current_user: Annotated[User, Depends(get_current_user)],
     session:      Annotated[AsyncSession, Depends(get_session)],
 ):
-    """Track FB Post or FB Groups posting events sent from the extension."""
+    """
+    Track a posting event (posted_marketplace / posted_fb_post / posted_fb_groups)
+    sent from the extension. Records one AdEvent per call — every channel, every time.
+
+    If the caller sends a `vin` (new extensions do) and no explicit listing_id, we
+    resolve the user's listing by VIN and store its id on the event. That link is
+    what lets the manager dashboard show WHICH channels a specific vehicle was posted
+    to (per-vehicle breakdown) — sourced from posting events, not the deduped
+    sold-check table. Resolution is best-effort: a missing/unknown VIN just leaves
+    listing_id null (the event still counts in totals).
+    """
     try:
+        listing_id = payload.listing_id
+        if listing_id is None and payload.vin:
+            found = await session.exec(
+                select(Listing).where(
+                    Listing.user_id == current_user.id,
+                    Listing.vin == payload.vin,
+                )
+            )
+            match = found.first()
+            if match:
+                listing_id = match.id
+
         vehicle_data = {
             'year':  payload.vehicle_year,
             'make':  payload.vehicle_make,
@@ -385,7 +431,7 @@ async def track_posting_event(
             session      = session,
             user         = current_user,
             event_type   = payload.event_type,
-            listing_id   = payload.listing_id,
+            listing_id   = listing_id,
             vehicle_data = vehicle_data,
             groups_count = payload.groups_count,
         )

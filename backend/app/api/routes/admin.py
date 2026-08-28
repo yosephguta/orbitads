@@ -36,6 +36,7 @@ from app.services.send_weekly_reports import (
     send_dealership_weekly_report,
     last_week_window,
 )
+from app.services.user_activity import get_user_activity, parse_dt
 
 router = APIRouter(prefix="/admin", tags=["admin"])
 
@@ -470,6 +471,39 @@ async def list_users(
         "offset": offset,
         "users": [UserRead.model_validate(u).model_dump() for u in users],
     }
+
+
+# ── STEP 7: Per-user activity detail (same picture as the manager drill-down) ──
+@router.get("/users/{user_id}/activity")
+async def user_activity(
+    user_id: int,
+    session: Annotated[SQLModelAsyncSession, Depends(get_session)],
+    _admin: Annotated[User, Depends(get_current_admin)],
+    since: Optional[str] = Query(default=None, description="ISO date; filters the vehicle list to cars posted on/after this"),
+    until: Optional[str] = Query(default=None, description="ISO date; filters the vehicle list to cars posted before this"),
+):
+    """
+    Full activity for any user — counts, favorites, and the cars they've made
+    ads for. Reuses the SAME get_user_activity service the manager drill-down
+    uses, so the admin and manager views of a salesperson are identical.
+
+    Admin is not dealership-scoped, so (unlike the manager route) there's no
+    dealership check — an admin may inspect any user. 404 only if the id is
+    unknown.
+    """
+    target = await session.get(User, user_id)
+    if not target:
+        raise HTTPException(status_code=404, detail="User not found.")
+
+    try:
+        since_dt, until_dt = parse_dt(since), parse_dt(until)
+    except ValueError:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="`since`/`until` must be ISO format, e.g. 2026-08-01.",
+        )
+
+    return await get_user_activity(session, target, since_dt, until_dt)
 
 
 # ══════════════════════════════════════════════════════════════

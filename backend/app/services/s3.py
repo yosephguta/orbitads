@@ -21,7 +21,8 @@ import uuid
 from typing import Optional
 
 import boto3
-from botocore.exceptions import ClientError
+from botocore.config import Config
+from botocore.exceptions import BotoCoreError, ClientError
 
 from app.core.config import get_settings
 
@@ -29,11 +30,24 @@ settings = get_settings()
 
 # ── S3 client ─────────────────────────────────────────────────
 # Created once and reused. boto3 clients are thread-safe.
+#
+# Retry hardening: multi-MB video uploads/downloads occasionally hit a transient
+# ConnectionClosedError (the socket to S3 drops mid-request) — especially when
+# several finished-video uploads run close together. The default (legacy) retry
+# mode doesn't reliably retry connection-level drops; "standard" mode does (it
+# treats ConnectionError/ConnectionClosedError as retryable). max_attempts=5 gives
+# up to 4 automatic retries with exponential backoff. Bodies are passed as in-memory
+# bytes (see upload_bytes), so a retried PUT re-sends the full payload safely.
 _s3 = boto3.client(
     "s3",
     aws_access_key_id=settings.aws_access_key_id,
     aws_secret_access_key=settings.aws_secret_access_key,
     region_name=settings.aws_region,
+    config=Config(
+        retries={"max_attempts": 5, "mode": "standard"},
+        connect_timeout=15,
+        read_timeout=120,
+    ),
 )
 
 BUCKET = settings.s3_bucket_name
@@ -148,7 +162,9 @@ def upload_bytes(data: bytes, s3_key: str, content_type: str) -> str:
             ContentType=content_type,
         )
         return s3_key
-    except ClientError as e:
+    # BotoCoreError covers connection-level failures (ConnectionClosedError etc.)
+    # that survive the client's retries; ClientError covers S3 API errors.
+    except (ClientError, BotoCoreError) as e:
         raise RuntimeError(f"Could not upload to S3: {e}") from e
 
 
@@ -162,7 +178,7 @@ def download_bytes(s3_key: str) -> bytes:
     try:
         response = _s3.get_object(Bucket=BUCKET, Key=s3_key)
         return response["Body"].read()
-    except ClientError as e:
+    except (ClientError, BotoCoreError) as e:
         raise RuntimeError(f"Could not download from S3: {e}") from e
 
 

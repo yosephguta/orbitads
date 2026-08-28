@@ -82,8 +82,10 @@ class Settings(BaseSettings):
     # ── CORS ──────────────────────────────────────────────────
     # Which frontend URLs are allowed to talk to this backend
     allowed_origins: list[str] = [
-        "http://localhost:5173",      # React dev server
-        "https://dealersorbit.com",   # production
+        "http://localhost:5173",                 # React dev server (dashboard local)
+        "https://dealersorbit.com",              # marketing website (production)
+        "https://admin.dealersorbit.com",        # admin dashboard (production)
+        "https://dashboard.dealersorbit.com",    # manager dashboard (production)
     ]
 
 

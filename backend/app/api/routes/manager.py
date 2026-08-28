@@ -28,73 +28,21 @@ from app.models.ad_event import AdEvent
 from app.models.listing import Listing
 from app.models.user import User
 from app.services.weekly_report import get_user_weekly_stats
+from app.services.user_activity import (
+    POSTED_EVENTS,
+    event_counts,
+    last_active,
+    get_user_activity,
+    parse_dt,
+)
 
 router = APIRouter(prefix="/manager", tags=["manager"])
 
-# "posted" is the sum of all three posting channels — the SAME definition the
-# weekly report uses (weekly_report.get_user_weekly_stats), so roster/detail
-# counts and the leaderboard never diverge.
-POSTED_EVENTS = ("posted_marketplace", "posted_fb_post", "posted_fb_groups")
-
 
 # ── Helpers ───────────────────────────────────────────────────
-async def _event_counts(
-    session: SQLModelAsyncSession, user_ids: List[int]
-) -> Dict[int, Dict[str, int]]:
-    """
-    {user_id: {'generated': n, 'posted': n, 'sold': n}} for the given users,
-    all-time, in ONE grouped query (no per-user round trip).
-    """
-    out: Dict[int, Dict[str, int]] = {
-        uid: {"generated": 0, "posted": 0, "sold": 0} for uid in user_ids
-    }
-    if not user_ids:
-        return out
-
-    rows = (
-        await session.exec(
-            select(AdEvent.user_id, AdEvent.event_type, func.count())
-            .where(AdEvent.user_id.in_(user_ids))
-            .group_by(AdEvent.user_id, AdEvent.event_type)
-        )
-    ).all()
-    for uid, event_type, cnt in rows:
-        bucket = out.setdefault(uid, {"generated": 0, "posted": 0, "sold": 0})
-        if event_type == "generated":
-            bucket["generated"] += cnt
-        elif event_type in POSTED_EVENTS:
-            bucket["posted"] += cnt
-        elif event_type == "sold_detected":
-            bucket["sold"] += cnt
-    return out
-
-
-async def _last_active(
-    session: SQLModelAsyncSession, user_ids: List[int]
-) -> Dict[int, Optional[datetime]]:
-    """{user_id: most-recent AdEvent.created_at or None}, in one grouped query."""
-    out: Dict[int, Optional[datetime]] = {uid: None for uid in user_ids}
-    if not user_ids:
-        return out
-    rows = (
-        await session.exec(
-            select(AdEvent.user_id, func.max(AdEvent.created_at))
-            .where(AdEvent.user_id.in_(user_ids))
-            .group_by(AdEvent.user_id)
-        )
-    ).all()
-    for uid, last in rows:
-        out[uid] = last
-    return out
-
-
-def _mode(values: List[Optional[str]]) -> Optional[str]:
-    """Most common non-null value; None if there are none. Ties resolve to
-    whichever `max` picks first — deterministic enough, never crashes."""
-    vals = [v for v in values if v]
-    if not vals:
-        return None
-    return max(set(vals), key=vals.count)
+# Per-user activity helpers (event_counts / last_active / mode / get_user_activity)
+# live in app/services/user_activity.py — shared with the admin user-detail route
+# so the two dashboards can't compute a salesperson differently.
 
 
 def _current_week_window(now: Optional[datetime] = None) -> tuple:
@@ -150,8 +98,8 @@ async def team_roster(
     ).all()
     user_ids = [u.id for u in members]
 
-    counts = await _event_counts(session, user_ids)
-    last_active = await _last_active(session, user_ids)
+    counts = await event_counts(session, user_ids)
+    last = await last_active(session, user_ids)
 
     return {
         "dealership_id": dealership_id,
@@ -162,7 +110,7 @@ async def team_roster(
                 "full_name": u.full_name,
                 "email": u.email,
                 "role": u.role,
-                "last_active": last_active.get(u.id),
+                "last_active": last.get(u.id),
                 "generated": counts[u.id]["generated"],
                 "posted": counts[u.id]["posted"],
                 "sold": counts[u.id]["sold"],
@@ -178,13 +126,20 @@ async def team_member_detail(
     user_id: int,
     session: Annotated[SQLModelAsyncSession, Depends(get_session)],
     manager: Annotated[User, Depends(get_current_manager)],
+    since: Optional[str] = Query(default=None, description="ISO date; filters the vehicle list to cars posted on/after this"),
+    until: Optional[str] = Query(default=None, description="ISO date; filters the vehicle list to cars posted before this"),
 ):
     """
-    Drill-down for one salesperson in the manager's dealership.
+    Drill-down for one salesperson in the manager's dealership. Delegates the
+    whole activity picture (counts, favorites, vehicle list) to the shared
+    get_user_activity service so it's identical to the admin user-detail view.
 
     404 (not 403) when the user isn't in the manager's dealership — including
     when the user_id simply doesn't exist — so a manager can't probe for the
     existence of user ids outside their scope.
+
+    `since`/`until` restrict the returned vehicle list to cars posted in that
+    window (by fb_posted_at); the top-line counts stay all-time.
     """
     dealership_id = manager.dealership_id
 
@@ -192,37 +147,15 @@ async def team_member_detail(
     if not target or target.dealership_id != dealership_id:
         raise HTTPException(status_code=404, detail="User not found.")
 
-    counts = (await _event_counts(session, [user_id]))[user_id]
-    last_active = (await _last_active(session, [user_id]))[user_id]
-
-    # Favorites = mode of theme/format/voice across this user's 'generated'
-    # events. Zero generated events → all three come back null (not an error).
-    gen_rows = (
-        await session.exec(
-            select(AdEvent.theme_used, AdEvent.video_format, AdEvent.voice_id_used)
-            .where(
-                AdEvent.user_id == user_id,
-                AdEvent.event_type == "generated",
-            )
+    try:
+        since_dt, until_dt = parse_dt(since), parse_dt(until)
+    except ValueError:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="`since`/`until` must be ISO format, e.g. 2026-08-01.",
         )
-    ).all()
-    themes = [r[0] for r in gen_rows]
-    formats = [r[1] for r in gen_rows]
-    voices = [r[2] for r in gen_rows]
 
-    return {
-        "id": target.id,
-        "full_name": target.full_name,
-        "email": target.email,
-        "role": target.role,
-        "last_active": last_active,
-        "generated": counts["generated"],
-        "posted": counts["posted"],
-        "sold": counts["sold"],
-        "favorite_theme": _mode(themes),
-        "favorite_format": _mode(formats),
-        "favorite_voice": _mode(voices),
-    }
+    return await get_user_activity(session, target, since_dt, until_dt)
 
 
 # ── STEP 3: Live leaderboard ──────────────────────────────────
