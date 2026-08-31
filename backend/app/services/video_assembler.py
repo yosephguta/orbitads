@@ -67,6 +67,13 @@ def _make_photo_clip(url: str, start: float, duration: float, index: int) -> dic
 
 
 # ── Slideshow (with optional outro) ──────────────────────────
+def timeline_max_photos(duration: float) -> int:
+    """How many photos the slideshow actually uses for a given audio duration.
+    Kept as a shared helper so the pipeline can re-host ONLY the photos that will
+    appear in the render (not the whole scraped set)."""
+    return min(7, max(3, int(duration / 3.0)))
+
+
 def build_ad_timeline_photo_only(
     audio_url: str,
     car_photo_urls: list[str],
@@ -98,7 +105,7 @@ def build_ad_timeline_photo_only(
     during the slideshow. The outro clip fades in and plays with no overlays —
     it is the CTA.
     """
-    max_photos  = min(7, max(3, int(duration / 3.0)))
+    max_photos  = timeline_max_photos(duration)
     photos      = list(car_photo_urls[:max_photos]) or [""]
     num_photos  = len(photos)
     photo_len   = round(duration / num_photos, 2)

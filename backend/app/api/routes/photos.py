@@ -15,7 +15,7 @@ from pydantic import BaseModel
 from app.core.security import get_current_user
 from app.core.middleware import require_active_subscription
 from app.models.user import User
-from app.services.photo_classifier import classify_photos_batch, sort_into_walkaround
+from app.services.photo_classifier import classify_photos_batch, sort_into_walkaround, lead_with_hero
 
 router = APIRouter(
     prefix="/photos", 
@@ -84,13 +84,19 @@ async def classify_photos(
     }
     interior_labels = {
         "interior_dashboard", "interior_seats", "interior_cargo",
+        # A sunroof/moonroof is a sought-after INTERIOR feature — surface it in the
+        # interior group. (Other interior close-ups stay in "additional".)
+        "interior_sunroof",
     }
     additional_labels = {
-        "interior_detail",
-        "exterior_detail",   # ← add this
+        "interior_detail",   # console, door panel, controls, buttons, gear shifter
+        "exterior_detail",   # wheels, lights, badges, trim close-ups
     }
 
-    exterior   = [p["url"] for p in sorted_photos if p["label"] in exterior_labels]
+    # Exterior leads with the dealer-convention hero (front 3/4), not the straight
+    # hood shot — lead_with_hero reorders it; the rest keep walkaround order.
+    exterior_dicts = lead_with_hero([p for p in sorted_photos if p["label"] in exterior_labels])
+    exterior   = [p["url"] for p in exterior_dicts]
     interior   = [p["url"] for p in sorted_photos if p["label"] in interior_labels]
     additional = [p["url"] for p in sorted_photos if p["label"] in additional_labels]
     other      = [p["url"] for p in sorted_photos if p["label"] == "other"]

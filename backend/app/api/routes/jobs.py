@@ -5,6 +5,8 @@ import json
 from datetime import datetime, timezone
 from typing import Annotated
 
+import httpx
+
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, status
 from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
@@ -19,6 +21,7 @@ from app.services.script_generator import generate_ad_script
 from app.services.voice_clone import text_to_speech
 from app.services.video_assembler import (
     build_ad_timeline_photo_only,
+    timeline_max_photos,
     submit_render,
     wait_for_render,
     wait_for_render_with_fallback,
@@ -27,6 +30,7 @@ from app.services.video_assembler import (
 )
 from app.services.s3 import (
     upload_bytes,
+    delete_prefix,
     make_audio_output_key,
     make_final_video_key,
     create_presigned_download_url,
@@ -81,6 +85,59 @@ async def _update_job_safe(job_id: int, **kwargs) -> None:
         job.updated_at = datetime.utcnow()
         session.add(job)
         await session.commit()
+
+
+_PHOTO_FETCH_HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
+        "(KHTML, like Gecko) Chrome/120.0 Safari/537.36"
+    ),
+    "Accept": "image/avif,image/webp,image/apng,image/*,*/*;q=0.8",
+}
+
+def _is_access_denied(msg: str) -> bool:
+    """Shotstack's error when a dealer CDN blocks its render servers."""
+    m = (msg or "").lower()
+    return "access denied" in m or "not accessible" in m or "403" in m
+
+
+async def _rehost_photos_to_s3(photo_urls: list, job_id: int) -> list:
+    """
+    Download each photo server-side and re-upload to S3, returning public S3 URLs
+    (bucket policy grants public read to outputs/*). Used ONLY when Shotstack is
+    blocked from the dealer's image CDN. Best-effort per photo (keeps the original
+    URL on failure). Objects live under outputs/{job_id}/photos/ and are deleted
+    after the render completes.
+    """
+    from app.core.config import get_settings
+    settings = get_settings()
+    out = []
+    async with httpx.AsyncClient(
+        timeout=30.0, follow_redirects=True, headers=_PHOTO_FETCH_HEADERS
+    ) as client:
+        for i, url in enumerate(photo_urls):
+            if not url or not str(url).startswith("http"):
+                out.append(url)
+                continue
+            try:
+                resp = await client.get(url)
+                if resp.status_code != 200 or not resp.content:
+                    out.append(url)
+                    continue
+                # Downsample to ~1280px JPEG (render is 1080p) — big S3/bandwidth
+                # savings vs. the 2-3 MB dealer originals. Off-loop (Pillow is CPU).
+                from app.services.image_utils import downsample_image_bytes
+                body = await asyncio.to_thread(downsample_image_bytes, resp.content, 1280, 85)
+                key = f"outputs/{job_id}/photos/{i}.jpg"
+                await asyncio.to_thread(upload_bytes, body, key, "image/jpeg")
+                out.append(
+                    f"https://{settings.s3_bucket_name}.s3."
+                    f"{settings.aws_region}.amazonaws.com/{key}"
+                )
+            except Exception as e:
+                print(f"Photo re-host failed for {url}: {e}")
+                out.append(url)
+    return out
 
 
 # ── Pipeline ──────────────────────────────────────────────────
@@ -348,31 +405,62 @@ async def _run_pipeline(job_id: int, user_id: int):
                         print(f"Audio level measurement failed, using default: {e}")
                         slideshow_volume = 1.0
 
-            timeline = build_ad_timeline_photo_only(
-                audio_url=audio_url,
-                car_photo_urls=car_photos,
-                dealership_name=user_dealership_name,
-                vehicle_summary=v_summary,
-                feature_highlights=highlights,
-                duration=audio_duration,
-                brand_color="#C4122F",
-                outro_video_url=outro_url,
-                outro_duration=outro_duration,
-                slideshow_volume=slideshow_volume,
-                language=job_language,
-            )
+            # Only the photos that will actually appear in the render (not the
+            # whole scraped set) — so any re-hosting downloads the minimum.
+            used_photos = car_photos[:timeline_max_photos(audio_duration)]
 
-            render_id = await submit_render(timeline)
+            def _make_timeline(photos):
+                return build_ad_timeline_photo_only(
+                    audio_url=audio_url,
+                    car_photo_urls=photos,
+                    dealership_name=user_dealership_name,
+                    vehicle_summary=v_summary,
+                    feature_highlights=highlights,
+                    duration=audio_duration,
+                    brand_color="#C4122F",
+                    outro_video_url=outro_url,
+                    outro_duration=outro_duration,
+                    slideshow_volume=slideshow_volume,
+                    language=job_language,
+                )
 
-            # Store render_id so the webhook endpoint can look up this job
-            await _update_job_safe(job_id,
-                shotstack_render_id=render_id,
-                status=JobStatus.ASSEMBLING,
-                progress_pct=85,
-            )
-            print(f"Shotstack render submitted: {render_id} — waiting for webhook or fallback poll")
+            async def _submit_and_wait(photos):
+                rid = await submit_render(_make_timeline(photos))
+                await _update_job_safe(job_id,
+                    shotstack_render_id=rid,
+                    status=JobStatus.ASSEMBLING,
+                    progress_pct=85,
+                )
+                print(f"Shotstack render submitted: {rid} — waiting for webhook or fallback poll")
+                return rid, await wait_for_render_with_fallback(rid)
 
-            fallback_url = await wait_for_render_with_fallback(render_id)
+            # Proxy proactively only for hosts already known (persisted) to block
+            # Shotstack; otherwise send the dealer URLs straight to Shotstack (no
+            # download). Unknown blockers are caught by the retry path below.
+            from app.services import photo_proxy
+            await photo_proxy.ensure_loaded()
+            proxied = photo_proxy.any_blocked(used_photos)
+            if proxied:
+                print("Photo host known to block Shotstack — re-hosting used photos to S3")
+                used_photos = await _rehost_photos_to_s3(used_photos, job_id)
+
+            try:
+                render_id, fallback_url = await _submit_and_wait(used_photos)
+            except RuntimeError as render_err:
+                # Dynamic recovery: if Shotstack was blocked from the image CDN,
+                # re-host the used photos to S3 and retry once — instead of failing
+                # the job. Works for ANY blocking host, and PERSISTS it so future
+                # jobs proxy proactively (no wasted first render next time).
+                if not proxied and _is_access_denied(str(render_err)):
+                    await photo_proxy.add_blocked_hosts(
+                        [photo_proxy.host_of(u) for u in used_photos], source="runtime"
+                    )
+                    print(f"Shotstack blocked from photo host ({render_err}) — re-hosting to S3 and retrying")
+                    used_photos = await _rehost_photos_to_s3(used_photos, job_id)
+                    proxied = True
+                    render_id, fallback_url = await _submit_and_wait(used_photos)
+                else:
+                    raise
 
             if fallback_url:
                 # Webhook didn't fire (dev, or missed) — fallback polling got the URL
@@ -408,6 +496,9 @@ async def _run_pipeline(job_id: int, user_id: int):
                 except Exception:
                     pass
 
+                # Clean up any re-hosted photo proxies for this job (no-op if none).
+                await asyncio.to_thread(delete_prefix, f"outputs/{job_id}/photos/")
+
                 await _update_job_safe(job_id,
                     final_video_s3_key=final_key,
                     final_video_url=presigned_url,
@@ -415,6 +506,11 @@ async def _run_pipeline(job_id: int, user_id: int):
                 )
 
         except Exception as e:
+            # Clean up re-hosted photo proxies even on failure (no-op if none).
+            try:
+                await asyncio.to_thread(delete_prefix, f"outputs/{job_id}/photos/")
+            except Exception:
+                pass
             await _update_job_safe(job_id,
                 status=JobStatus.FAILED,
                 error_message=f"Video assembly failed: {e}",
@@ -556,6 +652,9 @@ async def _process_shotstack_webhook(payload: dict):
                 print(f"Deleted render {render_id} from Shotstack")
             except Exception:
                 pass
+
+            # Clean up any re-hosted photo proxies for this job (no-op if none).
+            await asyncio.to_thread(delete_prefix, f"outputs/{job.id}/photos/")
 
             await _update_job_safe(job.id,
                 status             = JobStatus.COMPLETED,

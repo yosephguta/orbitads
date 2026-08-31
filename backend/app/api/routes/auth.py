@@ -516,7 +516,11 @@ async def update_me(
     if payload.cargurus_url is not None:
         current_user.cargurus_url = payload.cargurus_url.strip() or None
     if payload.dealer_inventory_url is not None:
-        current_user.dealer_inventory_url = payload.dealer_inventory_url.strip() or None
+        # Strip campaign query params / fragments (utm_*, gclid, gbraid, etc.) —
+        # a pasted landing/ppc link like ".../?utm_source=google&gclid=..." should
+        # be stored as the clean site URL for config generation + domain mapping.
+        _inv = payload.dealer_inventory_url.strip().split("#")[0].split("?")[0].strip()
+        current_user.dealer_inventory_url = _inv or None
     # Validate preferred_language
     if "preferred_language" in updates:
         if updates["preferred_language"] not in ("en", "es"):

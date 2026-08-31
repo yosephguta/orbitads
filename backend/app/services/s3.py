@@ -168,6 +168,25 @@ def upload_bytes(data: bytes, s3_key: str, content_type: str) -> str:
         raise RuntimeError(f"Could not upload to S3: {e}") from e
 
 
+def delete_prefix(prefix: str) -> int:
+    """
+    Delete every object under an S3 prefix. Used to clean up re-hosted photo
+    proxies (outputs/{job_id}/photos/) after a render completes. Returns the count
+    deleted; never raises (best-effort cleanup).
+    """
+    deleted = 0
+    try:
+        paginator = _s3.get_paginator("list_objects_v2")
+        for page in paginator.paginate(Bucket=BUCKET, Prefix=prefix):
+            objs = [{"Key": o["Key"]} for o in page.get("Contents", [])]
+            if objs:
+                _s3.delete_objects(Bucket=BUCKET, Delete={"Objects": objs})
+                deleted += len(objs)
+    except (ClientError, BotoCoreError) as e:
+        print(f"[s3] delete_prefix({prefix}) failed: {e}")
+    return deleted
+
+
 # ── Download bytes ─────────────────────────────────────────────
 def download_bytes(s3_key: str) -> bytes:
     """

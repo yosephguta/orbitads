@@ -123,6 +123,44 @@ def send_trial_reminder_email(to: str, full_name: str, days_left: int) -> None:
     )
 
 
+def send_dealer_config_ready_email(to: str, full_name: str, domain: str) -> None:
+    """
+    Sent when an admin approves a dealer's site config (Part 5). The extension
+    fetches the active config fresh from the backend each time it loads a page
+    (GET /dealer-configs/domain/{domain}), so a page refresh is enough — no
+    re-login required in the normal case. We still mention sign-out as a fallback
+    in case a stale cached `user` blocks the domain-restriction check.
+    """
+    first_name = (full_name or "").split(" ")[0] or (full_name or "there")
+    _send(
+        to=to,
+        subject="Your DealersOrbit dealer site config is ready! 🎉",
+        html=f"""
+        <div style="font-family:-apple-system,sans-serif;max-width:520px;margin:0 auto;padding:20px">
+          <h1 style="color:#111827">You're all set, {first_name}!</h1>
+          <p style="color:#374151;line-height:1.6">
+            Good news — your dealership site
+            <strong>{domain}</strong> is now supported by DealersOrbit. You can
+            import vehicles straight from your own inventory pages.
+          </p>
+          <div style="background:#f9fafb;border-radius:12px;padding:20px;margin:20px 0;color:#374151;line-height:1.6">
+            <h3 style="margin-top:0">How to start using it</h3>
+            <ol style="padding-left:18px;margin:0">
+              <li>Open your dealership inventory page in your browser.</li>
+              <li><strong>Refresh the page</strong> — the DealersOrbit <em>Import</em> buttons
+                  will appear on each vehicle.</li>
+              <li>Don't see them right away? Sign out of the DealersOrbit extension and
+                  sign back in, then refresh the page.</li>
+            </ol>
+          </div>
+          <p style="color:#6b7280;font-size:14px">
+            Questions? Just reply to this email or use the Help panel in the extension.
+          </p>
+        </div>
+        """,
+    )
+
+
 def send_payment_failed_email(to: str, full_name: str) -> None:
     _send(
         to=to,

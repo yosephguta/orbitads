@@ -1,0 +1,361 @@
+{
+  "configs": [
+    {
+      "platform_slug": "dealereprocess",
+      "name": "Generated: dealereprocess",
+      "source_url": "https://www.antwerpenvw.com/",
+      "status": "active",
+      "config_json": {
+        "platform": "dealereprocess",
+        "inventory": {
+          "vehicle_cards": "div.vehicle_item",
+          "url_pattern": "/auto/",
+          "data_attribute": null,
+          "fields": {
+            "year": ".vehicle_title a",
+            "make": ".vehicle_title a",
+            "model": ".vehicle_title a",
+            "trim": ".vehicle_title a",
+            "price": ".details_master_price_display__price span",
+            "mileage": ".single-line-details__item:last-child",
+            "vin": null,
+            "listing_url": ".vehicle_item__vehicle_link",
+            "image": ".loopslider__inner_container .loopslider__image_container:first-child img"
+          },
+          "button_injection": ".vehicle_item__bottom_bar"
+        },
+        "detail_page": {
+          "sale_price": ".details_master_price_display__price span",
+          "retail_price": null,
+          "processing_fee": null,
+          "exterior_color": "div.features_snapshot__detail",
+          "interior_color": "div.features_snapshot__detail",
+          "body_style": null,
+          "mileage": "div.features_snapshot__detail",
+          "vin": "div.features_snapshot__detail",
+          "photos": ".loopslider__image_wrapper .loopslider__image_container img.loopslider__image"
+        },
+        "sold_indicators": [
+          "InStock",
+          "sold",
+          "unavailable",
+          "no longer available",
+          "vehicle has been sold"
+        ],
+        "photo_hints": {
+          "exterior_count": null,
+          "interior_start": null
+        },
+        "notes_for_human_review": [
+          "Platform identified as DealerEProcess (dealereprocess.com / dep). The class 'dealereprocess' is inferred from CDN URLs (cdn.dealereprocess.org, dealereprocess.com) and script patterns.",
+          "year/make/model/trim are all parsed from the single .vehicle_title a element \u2014 the client must parse the full title string (e.g. 'Used 2016 Kia Sorento EX'). No individual selectors exist for each field.",
+          "price on the card: The dealer uses 'Jack Says Yes Price' / 'Jack Says Yes $pecial' as their final advertised price label (includes Documentation Fee of $799). The selector .details_master_price_display__price span targets that final price in the Details tab of the card. Confirm this is the correct total-fee-inclusive price.",
+          "VIN on the card is not in a standard element \u2014 it is available as the data-vin attribute on the root div.vehicle_item. The client should read: document.querySelector('.vehicle_item').dataset.vin.",
+          "mileage on the card is in .single-line-details__item \u2014 the second item contains 'Mileage XXXXX' text. For new inventory cards this element may not be present. The client will need to strip the 'Mileage ' label prefix.",
+          "Detail page: exterior_color, interior_color, mileage, VIN selectors use nth-child positional selectors inside .tabbable_container__content--showing. These are fragile if the order of detail_node items changes between vehicles. The human hint says to click the 'Details' tab first; the scraper must click tabbable_container__header:nth-child(2) or the tab labeled 'Details' before reading attributes.",
+          "Detail page sale_price: The final price label varies \u2014 'Jack Says Yes Price' for used, 'Jack Says Yes $pecial' for new. Both use the same .details_master_price_display__price span selector so this should be stable, but confirm across more vehicles.",
+          "processing_fee / doc fee: The $799 Documentation Fee is shown as a separate line in the pricing breakdown and appears to be INCLUDED in the final 'Jack Says Yes Price'. Confirm this with the dealer \u2014 if the final price already includes the doc fee, the current sale_price selector is correct.",
+          "retail_price: For used vehicles, 'Retail Price' is shown separately. For new vehicles, 'MSRP' is shown. Neither is targeted since we only want the final advertised price.",
+          "sold_indicators: These are inferred/guessed. Manual verification of what actually appears in the HTML/JS when a vehicle is sold or removed is strongly recommended.",
+          "Photo URLs are in both src and data-src. The src attribute is set to a loading GIF for lazy-loaded images; data-src contains the real URL. The scraper should prefer data-src over src for gallery images.",
+          "body_style is not available as a dedicated element in the Details tab (only Doors count is shown). Set to null; client may derive from vehicle title or JSON-LD @type if needed.",
+          "The new inventory card for the Jetta does not show mileage in .single-line-details (new car). Selectors should handle absent mileage gracefully."
+        ],
+        "_generation_warnings": [],
+        "_usage": {
+          "input_tokens": 53545,
+          "output_tokens": 1320
+        }
+      },
+      "notes": "Platform identified as DealerEProcess (dealereprocess.com / dep). The class 'dealereprocess' is inferred from CDN URLs (cdn.dealereprocess.org, dealereprocess.com) and script patterns.\nyear/make/model/trim are all parsed from the single .vehicle_title a element \u2014 the client must parse the full title string (e.g. 'Used 2016 Kia Sorento EX'). No individual selectors exist for each field.\nprice on the card: The dealer uses 'Jack Says Yes Price' / 'Jack Says Yes $pecial' as their final advertised price label (includes Documentation Fee of $799). The selector .details_master_price_display__price span targets that final price in the Details tab of the card. Confirm this is the correct total-fee-inclusive price.\nVIN on the card is not in a standard element \u2014 it is available as the data-vin attribute on the root div.vehicle_item. The client should read: document.querySelector('.vehicle_item').dataset.vin.\nmileage on the card is in .single-line-details__item \u2014 the second item contains 'Mileage XXXXX' text. For new inventory cards this element may not be present. The client will need to strip the 'Mileage ' label prefix.\nDetail page: exterior_color, interior_color, mileage, VIN selectors use nth-child positional selectors inside .tabbable_container__content--showing. These are fragile if the order of detail_node items changes between vehicles. The human hint says to click the 'Details' tab first; the scraper must click tabbable_container__header:nth-child(2) or the tab labeled 'Details' before reading attributes.\nDetail page sale_price: The final price label varies \u2014 'Jack Says Yes Price' for used, 'Jack Says Yes $pecial' for new. Both use the same .details_master_price_display__price span selector so this should be stable, but confirm across more vehicles.\nprocessing_fee / doc fee: The $799 Documentation Fee is shown as a separate line in the pricing breakdown and appears to be INCLUDED in the final 'Jack Says Yes Price'. Confirm this with the dealer \u2014 if the final price already includes the doc fee, the current sale_price selector is correct.\nretail_price: For used vehicles, 'Retail Price' is shown separately. For new vehicles, 'MSRP' is shown. Neither is targeted since we only want the final advertised price.\nsold_indicators: These are inferred/guessed. Manual verification of what actually appears in the HTML/JS when a vehicle is sold or removed is strongly recommended.\nPhoto URLs are in both src and data-src. The src attribute is set to a loading GIF for lazy-loaded images; data-src contains the real URL. The scraper should prefer data-src over src for gallery images.\nbody_style is not available as a dedicated element in the Details tab (only Doors count is shown). Set to null; client may derive from vehicle title or JSON-LD @type if needed.\nThe new inventory card for the Jetta does not show mileage in .single-line-details (new car). Selectors should handle absent mileage gracefully.",
+      "generation_warnings": [],
+      "domains": [
+        "antwerpenvw.com"
+      ]
+    },
+    {
+      "platform_slug": "cai-inventory",
+      "name": "Generated: cai-inventory",
+      "source_url": "https://www.appleford.com/",
+      "status": "active",
+      "config_json": {
+        "platform": "cai-inventory",
+        "inventory": {
+          "vehicle_cards": "div.group.relative.flex.flex-col.rounded-lg.bg-surface-primary",
+          "url_pattern": "/cpo/|/new/|/used/",
+          "data_attribute": null,
+          "fields": {
+            "year": "p.font-mono.text-foreground-info",
+            "make": "a.text-foreground-primary p.truncate.whitespace-nowrap",
+            "model": "a.text-foreground-primary p.truncate.whitespace-nowrap",
+            "trim": "a.text-foreground-primary p.truncate.whitespace-nowrap",
+            "price": "p.text-lg.font-semibold.whitespace-nowrap.text-right.text-foreground-primary",
+            "mileage": null,
+            "vin": null,
+            "listing_url": "a.text-foreground-primary[href]",
+            "image": "div.relative.aspect-\\[4\\/3\\].snap-start img"
+          },
+          "button_injection": "div.flex.gap-2.flex-col.items-stretch.w-fit.shrink-0"
+        },
+        "detail_page": {
+          "sale_price": "p.text-3xl.font-bold",
+          "retail_price": "p.whitespace-nowrap.text-right.font-mono span.line-through",
+          "processing_fee": null,
+          "exterior_color": null,
+          "interior_color": null,
+          "body_style": null,
+          "mileage": null,
+          "vin": null,
+          "photos": "div.relative.aspect-\\[4\\/3\\] button img"
+        },
+        "sold_indicators": [
+          "sold",
+          "unavailable",
+          "vehicle is no longer available",
+          "this vehicle has been sold"
+        ],
+        "photo_hints": {
+          "exterior_count": null,
+          "interior_start": null
+        },
+        "notes_for_human_review": [
+          "year/make/model/trim all live in overlapping elements with shared classes \u2014 the card title element (p.truncate.whitespace-nowrap inside the anchor) contains 'Ford Maverick XL' without year; year is in a sibling p.font-mono. Client should parse make/model/trim from the title text at runtime.",
+          "mileage and VIN on card are rendered as plain <p class='text-xs sm:text-sm sm: whitespace-nowrap text-foreground-info'> elements with no unique class distinguishing them from stock number or location \u2014 positional selectors avoided per rules; client should resolve by text pattern (digits + 'mi' for mileage, 17-char alphanum for VIN).",
+          "Detail page spec table uses a label/value grid where value cells share the class 'truncate whitespace-nowrap font-medium text-foreground-secondary' with no unique identifier per row \u2014 positional selectors not used; exterior_color, interior_color, mileage, vin, and body_style all set to null for runtime label-scan resolution.",
+          "price on card: the $29,797 figure is labeled as the advertised price; no separate processing/doc fee line was visible in the provided HTML. Confirm on live page whether a processing fee is shown separately and whether the card/detail price already includes it.",
+          "sold_indicators are inferred \u2014 manual verification required against live sold/removed vehicle pages.",
+          "Platform slug 'cai-inventory' inferred from asset domain 'cai-media-management.com'; confirm actual platform name.",
+          "URL pattern covers /cpo/ and /new/ seen in samples; verify if /used/ is also used for non-CPO used vehicles.",
+          "MSRP strikethrough selector targets the span.line-through inside the MSRP paragraph \u2014 confirm this is consistent across all new vehicle cards.",
+          "Photo selector covers both the main grid images and carousel images; may return duplicates \u2014 client should deduplicate by src."
+        ],
+        "_generation_warnings": [],
+        "_usage": {
+          "input_tokens": 11854,
+          "output_tokens": 1001
+        }
+      },
+      "notes": "year/make/model/trim all live in overlapping elements with shared classes \u2014 the card title element (p.truncate.whitespace-nowrap inside the anchor) contains 'Ford Maverick XL' without year; year is in a sibling p.font-mono. Client should parse make/model/trim from the title text at runtime.\nmileage and VIN on card are rendered as plain <p class='text-xs sm:text-sm sm: whitespace-nowrap text-foreground-info'> elements with no unique class distinguishing them from stock number or location \u2014 positional selectors avoided per rules; client should resolve by text pattern (digits + 'mi' for mileage, 17-char alphanum for VIN).\nDetail page spec table uses a label/value grid where value cells share the class 'truncate whitespace-nowrap font-medium text-foreground-secondary' with no unique identifier per row \u2014 positional selectors not used; exterior_color, interior_color, mileage, vin, and body_style all set to null for runtime label-scan resolution.\nprice on card: the $29,797 figure is labeled as the advertised price; no separate processing/doc fee line was visible in the provided HTML. Confirm on live page whether a processing fee is shown separately and whether the card/detail price already includes it.\nsold_indicators are inferred \u2014 manual verification required against live sold/removed vehicle pages.\nPlatform slug 'cai-inventory' inferred from asset domain 'cai-media-management.com'; confirm actual platform name.\nURL pattern covers /cpo/ and /new/ seen in samples; verify if /used/ is also used for non-CPO used vehicles.\nMSRP strikethrough selector targets the span.line-through inside the MSRP paragraph \u2014 confirm this is consistent across all new vehicle cards.\nPhoto selector covers both the main grid images and carousel images; may return duplicates \u2014 client should deduplicate by src.",
+      "generation_warnings": [],
+      "domains": [
+        "appleford.com"
+      ]
+    },
+    {
+      "platform_slug": "dealercenter",
+      "name": "Generated: dealercenter",
+      "source_url": "https://www.agautosalesmd.com/",
+      "status": "active",
+      "config_json": {
+        "platform": "dealercenter",
+        "inventory": {
+          "vehicle_cards": "div.dws-listing-item",
+          "url_pattern": "/inventory/",
+          "data_attribute": null,
+          "fields": {
+            "year": null,
+            "make": null,
+            "model": null,
+            "trim": "span.dws-vehicle-fields-value",
+            "price": ".dws-listing-price .field-value",
+            "mileage": ".dws-vehicle-field-mileage .dws-vehicle-listing-item-field-value",
+            "vin": ".dws-vehicle-field-vin .dws-vehicle-listing-item-field-value",
+            "listing_url": ".dws-listing-title a.view-details-link",
+            "image": ".dws-listing-image-holder"
+          },
+          "button_injection": ".dws-listing-button-wrapper ul.dws-listing-buttons"
+        },
+        "detail_page": {
+          "sale_price": ".dws-vdp-single-field-value-vehicleprice",
+          "retail_price": null,
+          "processing_fee": null,
+          "exterior_color": ".dws-vehicle-fields-item .dws-icons-feature-exterior-color ~ .dws-vehicle-fields-value",
+          "interior_color": ".dws-vehicle-fields-item .dws-icons-feature-interior-color ~ .dws-vehicle-fields-value",
+          "body_style": null,
+          "mileage": ".dws-vehicle-fields-item .dws-icons-feature-mileage ~ .dws-vehicle-fields-value",
+          "vin": ".dws-vehicle-fields-item .dws-icons-feature-vin ~ .dws-vehicle-fields-value",
+          "photos": ".dws-vdp-media-slider li.dws-media-slide-image:not(.slick-cloned) .dws-vehicles-slider-item-container img.dws-img-with-popup",
+          "photos_url_include": "Only use photos that have imagescf.dealercenter.net/719"
+        },
+        "sold_indicators": [
+          "sold-remove",
+          "call-us-price-link-remove",
+          "no-active-deposit"
+        ],
+        "photo_hints": {
+          "exterior_count": null,
+          "interior_start": null
+        },
+        "notes_for_human_review": [
+          "year, make, model are NOT separate elements on the card \u2014 they are embedded in the title link text '2023 JEEP GLADIATOR'; the client must parse them from the trim selector (.dws-listing-title a.view-details-link)",
+          "trim on the card is also embedded in the title; on the detail page there is a dedicated .dws-icons-feature-trim sibling .dws-vehicle-fields-value element containing 'OVERLAND PICKUP 4D 5 FT'",
+          "exterior_color and interior_color selectors rely on an icon span sibling relationship; these should be confirmed against the live page as the sibling combinator (~) may match unexpected elements if the DOM order differs",
+          "The card thumbnail is a background-image div (.dws-listing-image-holder), not an <img> tag \u2014 scraper must read data-background-image or style attribute instead of src",
+          "sold_indicators are CSS class names on the card wrapper, not text strings \u2014 actual sold page text indicators need manual verification on a sold vehicle's detail page",
+          "No MSRP/retail price was shown in the provided HTML fragments; retail_price set to null pending confirmation",
+          "No processing/doc fee line was visible in the price section; set to null but should be verified across other vehicles",
+          "Photo selector excludes .slick-cloned slides to avoid duplicate URLs; confirm this works on the live page",
+          "body_style is not a distinct field in the spec table fragment provided; set to null"
+        ],
+        "_generation_warnings": [],
+        "_usage": {
+          "input_tokens": 51615,
+          "output_tokens": 963
+        }
+      },
+      "notes": "year, make, model are NOT separate elements on the card \u2014 they are embedded in the title link text '2023 JEEP GLADIATOR'; the client must parse them from the trim selector (.dws-listing-title a.view-details-link)\ntrim on the card is also embedded in the title; on the detail page there is a dedicated .dws-icons-feature-trim sibling .dws-vehicle-fields-value element containing 'OVERLAND PICKUP 4D 5 FT'\nexterior_color and interior_color selectors rely on an icon span sibling relationship; these should be confirmed against the live page as the sibling combinator (~) may match unexpected elements if the DOM order differs\nThe card thumbnail is a background-image div (.dws-listing-image-holder), not an <img> tag \u2014 scraper must read data-background-image or style attribute instead of src\nsold_indicators are CSS class names on the card wrapper, not text strings \u2014 actual sold page text indicators need manual verification on a sold vehicle's detail page\nNo MSRP/retail price was shown in the provided HTML fragments; retail_price set to null pending confirmation\nNo processing/doc fee line was visible in the price section; set to null but should be verified across other vehicles\nPhoto selector excludes .slick-cloned slides to avoid duplicate URLs; confirm this works on the live page\nbody_style is not a distinct field in the spec table fragment provided; set to null",
+      "generation_warnings": [],
+      "domains": [
+        "agautosalesmd.com"
+      ]
+    },
+    {
+      "platform_slug": "dealer.com",
+      "name": "Generated: dealer.com",
+      "source_url": "https://www.tatedodgechryslerjeep.net/",
+      "status": "active",
+      "config_json": {
+        "platform": "dealer.com",
+        "inventory": {
+          "vehicle_cards": "li.vehicle-card",
+          "url_pattern": "/used/|/new/",
+          "data_attribute": null,
+          "fields": {
+            "year": ".vehicle-card-title a span",
+            "make": ".vehicle-card-title a span",
+            "model": ".vehicle-card-title a span",
+            "trim": ".vehicle-card-title a span",
+            "price": ".pricing-detail .final-price.internetPrice .price-value",
+            "mileage": ".vehicle-card-highlight .highlight-badge",
+            "vin": ".vehicle-card-description li.vin",
+            "listing_url": ".vehicle-card-title a",
+            "image": ".slick-slide.slick-current .img-container img"
+          },
+          "button_injection": ".vehicle-ctas"
+        },
+        "detail_page": {
+          "sale_price": ".pricing-detail .final-price.internetPrice .price-value",
+          "retail_price": ".pricing-detail .msrp .price-value",
+          "processing_fee": ".pricing-detail .documentFee .price-value",
+          "exterior_color": null,
+          "interior_color": null,
+          "body_style": "dd.col-xs-7.px-0 span.mr-3",
+          "mileage": null,
+          "vin": "span.mr-3",
+          "photos": ".slider-list .slide:not(.prev-cloned):not(.next-cloned) img[src]:not([src='/static/images/blank.gif'])"
+        },
+        "sold_indicators": [
+          "sold",
+          "vehicle is no longer available",
+          "this vehicle has been sold",
+          "unavailable",
+          "vehicle not found"
+        ],
+        "photo_hints": {
+          "exterior_count": null,
+          "interior_start": null
+        },
+        "notes_for_human_review": [
+          "year/make/model/trim all come from the same '.vehicle-card-title a span' element (e.g. '2014 Jeep Patriot Sport SUV') \u2014 client must parse these out at runtime",
+          "For new inventory, the final price labeled 'Trusted Tate Price' uses selector '.pricing-detail .final-price.SIFRule .price-value'; used inventory uses '.pricing-detail .final-price.internetPrice .price-value' \u2014 these differ by inventory type. A runtime check on inv-type-new vs inv-type-used class may be needed.",
+          "detail_page exterior_color, interior_color, mileage, vin, and body_style all live in a dl/dt/dd spec table with no unique stable classes on the dd elements \u2014 set to null; client should resolve by scanning label text at runtime",
+          "Photo gallery uses .slide elements with prev-cloned and next-cloned duplicates; client must deduplicate and filter out blank.gif placeholder src values",
+          "Some gallery images use a third-party 360-spin URL (glo3d-c338b.cloudfunctions.net) mixed with dealer.com CDN images \u2014 client should handle both",
+          "sold_indicators are inferred and need manual verification against live sold/removed vehicle pages",
+          "New vehicle 'Conditional Price' (labeled 'Conditional Price', selector '.pricing-detail .conditional-final-price .price-value') is below the 'Trusted Tate Price' but requires eligibility conditions \u2014 do NOT use as sale_price",
+          "Mileage on the card for used inventory comes from '.vehicle-card-highlight .highlight-badge' but new inventory cards may not show this badge \u2014 needs verification"
+        ],
+        "_generation_warnings": [],
+        "_usage": {
+          "input_tokens": 25589,
+          "output_tokens": 887
+        }
+      },
+      "notes": "year/make/model/trim all come from the same '.vehicle-card-title a span' element (e.g. '2014 Jeep Patriot Sport SUV') \u2014 client must parse these out at runtime\nFor new inventory, the final price labeled 'Trusted Tate Price' uses selector '.pricing-detail .final-price.SIFRule .price-value'; used inventory uses '.pricing-detail .final-price.internetPrice .price-value' \u2014 these differ by inventory type. A runtime check on inv-type-new vs inv-type-used class may be needed.\ndetail_page exterior_color, interior_color, mileage, vin, and body_style all live in a dl/dt/dd spec table with no unique stable classes on the dd elements \u2014 set to null; client should resolve by scanning label text at runtime\nPhoto gallery uses .slide elements with prev-cloned and next-cloned duplicates; client must deduplicate and filter out blank.gif placeholder src values\nSome gallery images use a third-party 360-spin URL (glo3d-c338b.cloudfunctions.net) mixed with dealer.com CDN images \u2014 client should handle both\nsold_indicators are inferred and need manual verification against live sold/removed vehicle pages\nNew vehicle 'Conditional Price' (labeled 'Conditional Price', selector '.pricing-detail .conditional-final-price .price-value') is below the 'Trusted Tate Price' but requires eligibility conditions \u2014 do NOT use as sale_price\nMileage on the card for used inventory comes from '.vehicle-card-highlight .highlight-badge' but new inventory cards may not show this badge \u2014 needs verification",
+      "generation_warnings": [],
+      "domains": [
+        "tatedodgechryslerjeep.net"
+      ]
+    },
+    {
+      "platform_slug": "carsforsale.com",
+      "name": "Generated: carsforsale.com",
+      "source_url": "https://www.dawsonsautoandcycle.com/",
+      "status": "active",
+      "config_json": {
+        "platform": "carsforsale.com",
+        "inventory": {
+          "vehicle_cards": "li.vehicle-snapshot",
+          "url_pattern": "/details/",
+          "data_attribute": null,
+          "fields": {
+            "year": "h3.vehicle-snapshot__title a",
+            "make": "h3.vehicle-snapshot__title a",
+            "model": "h3.vehicle-snapshot__title a",
+            "trim": "h3.vehicle-snapshot__title a",
+            "price": "div.vehicle-snapshot__main-info.font-primary",
+            "mileage": "div.vehicle-snapshot__main-info-item:last-of-type div.vehicle-snapshot__main-info",
+            "vin": null,
+            "listing_url": "h3.vehicle-snapshot__title a",
+            "image": "div.vehicle-snapshot__image img"
+          },
+          "button_injection": "div.vehicle-snapshot__contact-footer"
+        },
+        "detail_page": {
+          "sale_price": "h3.vdp-header-bar__price",
+          "retail_price": null,
+          "processing_fee": null,
+          "exterior_color": null,
+          "interior_color": null,
+          "body_style": null,
+          "mileage": null,
+          "vin": "div.vdp-info-block__info-item .js-vin-message",
+          "photos": "div.carousel-inner div.item img"
+        },
+        "sold_indicators": [
+          "sold",
+          "vehicle is no longer available",
+          "this vehicle has been sold",
+          "unavailable"
+        ],
+        "photo_hints": {
+          "exterior_count": null,
+          "interior_start": null
+        },
+        "notes_for_human_review": [
+          "year/make/model/trim are all parsed from the same element (h3.vehicle-snapshot__title a) \u2014 client must split on whitespace to extract individual fields",
+          "mileage on the inventory card: the selector 'div.vehicle-snapshot__main-info-item:last-of-type div.vehicle-snapshot__main-info' uses a positional pseudo-class \u2014 flagged as fragile; confirm on a second card sample or resolve by label scanning",
+          "detail page: exterior_color, interior_color, mileage, and body_style are inside .vdp-info-block__info-item elements identified only by their label text (e.g. 'Exterior Color', 'Interior Color', 'Mileage') with no unique class/id on the value element \u2014 set to null; client should resolve by scanning vdp-info-block__info-item-title text and returning the sibling vdp-info-block__info-item-description",
+          "price on the card shows $15,500 as the main price and $17,999 as a strikethrough special-price \u2014 $15,500 in .vehicle-snapshot__main-info appears to be the sale/internet price; $17,999 in .vehicle-snapshot__special-price appears to be the higher retail/MSRP \u2014 verify this interpretation on the live site",
+          "no processing fee or doc fee line was visible in the provided fragments \u2014 verify on the live detail page whether mandatory fees are included in the displayed price or shown separately",
+          "photo gallery: only the first .item img uses src for the real image URL; all subsequent images use data-lazy for the actual photo URL \u2014 scraper must check data-lazy first, fall back to src",
+          "sold_indicators are guesses and must be verified manually against the live platform behavior"
+        ],
+        "_generation_warnings": [],
+        "_usage": {
+          "input_tokens": 25774,
+          "output_tokens": 897
+        }
+      },
+      "notes": "year/make/model/trim are all parsed from the same element (h3.vehicle-snapshot__title a) \u2014 client must split on whitespace to extract individual fields\nmileage on the inventory card: the selector 'div.vehicle-snapshot__main-info-item:last-of-type div.vehicle-snapshot__main-info' uses a positional pseudo-class \u2014 flagged as fragile; confirm on a second card sample or resolve by label scanning\ndetail page: exterior_color, interior_color, mileage, and body_style are inside .vdp-info-block__info-item elements identified only by their label text (e.g. 'Exterior Color', 'Interior Color', 'Mileage') with no unique class/id on the value element \u2014 set to null; client should resolve by scanning vdp-info-block__info-item-title text and returning the sibling vdp-info-block__info-item-description\nprice on the card shows $15,500 as the main price and $17,999 as a strikethrough special-price \u2014 $15,500 in .vehicle-snapshot__main-info appears to be the sale/internet price; $17,999 in .vehicle-snapshot__special-price appears to be the higher retail/MSRP \u2014 verify this interpretation on the live site\nno processing fee or doc fee line was visible in the provided fragments \u2014 verify on the live detail page whether mandatory fees are included in the displayed price or shown separately\nphoto gallery: only the first .item img uses src for the real image URL; all subsequent images use data-lazy for the actual photo URL \u2014 scraper must check data-lazy first, fall back to src\nsold_indicators are guesses and must be verified manually against the live platform behavior",
+      "generation_warnings": [],
+      "domains": [
+        "dawsonsautoandcycle.com"
+      ]
+    }
+  ],
+  "blocked_photo_hosts": [
+    {
+      "hostname": "cdn05.carsforsale.com",
+      "source": "config_gen"
+    },
+    {
+      "hostname": "cloudflareimages.dealereprocess.com",
+      "source": "runtime"
+    },
+    {
+      "hostname": "imagescf.dealercenter.net",
+      "source": "config_gen"
+    }
+  ]
+}

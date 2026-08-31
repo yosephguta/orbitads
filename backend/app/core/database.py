@@ -8,6 +8,8 @@ from app.models.dealership import Dealership  # noqa
 from app.models.job import Job  # noqa
 from app.models.listing import Listing  # noqa
 from app.models.outro_video import OutroVideo  # noqa
+from app.models.dealer_platform_domain import DealerPlatformDomain  # noqa
+from app.models.blocked_photo_host import BlockedPhotoHost  # noqa
 
 settings = get_settings()
 

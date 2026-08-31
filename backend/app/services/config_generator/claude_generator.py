@@ -75,6 +75,22 @@ Critical rules:
 - If a data-* attribute contains JSON with vehicle fields, set data_attribute
   and still fill in CSS selectors as fallback.
 - Prefer stable class/data-testid selectors over positional selectors.
+- NEVER use positional selectors (:nth-of-type, :nth-child, :first-child, bare
+  indexed elements) for detail/spec fields (mileage, vin, colors, body style).
+  They match a DIFFERENT element on the full live page than on a pasted fragment,
+  silently grabbing the wrong value (e.g. mileage returning "Cruise Control"). If
+  a spec value has no stable class/id/data-attribute, set that field to null —
+  the client resolves it by scanning the label text at runtime.
+- TRIM is often NOT a separate field — it's the trailing word(s) of the card/detail
+  TITLE after year, make, and model (e.g. "2018 Hyundai Accent SE" → trim "SE").
+  If there's no dedicated trim element, set trim to the title selector (the client
+  parses it out) or null; do not invent a fragile selector.
+- NEVER use jQuery-only pseudo-selectors — especially :contains(). They are NOT
+  valid CSS and FAIL in the browser (document.querySelector throws). This applies
+  to every field. For a spec table of <dt>label</dt><dd>value</dd> pairs where the
+  <dd> value cell has NO unique class/id/data-attribute, you CANNOT target it with
+  plain CSS — set that field to null (the client resolves these by scanning the
+  label text automatically). Do not emit "dt:contains('X') + dd".
 - If not confident about a field, set it to null and explain in notes_for_human_review.
 - Output valid JSON only — no exceptions.'''
 
@@ -158,11 +174,83 @@ For missing fields, infer from the HTML. Set unknown fields to null.'''
     return config
 
 
-async def generate_config(card_html: str, detail_html: str | None) -> dict:
+FIELD_SYSTEM_PROMPT = '''You configure a web scraper for a car dealership site.
+Given a small HTML snippet and ONE target field, return the best CSS selector for
+JUST that field's value.
+
+Output ONLY valid JSON — no markdown, no prose:
+{
+  "selector": "<a browser-valid CSS selector targeting the element whose text IS the field's value>",
+  "value":    "<the exact value that selector extracts from the snippet>",
+  "note":     "<empty string, OR a short note if the value cannot be cleanly isolated>"
+}
+
+Rules:
+- NEVER use jQuery-only pseudo-selectors like :contains() — they fail in the browser.
+- Prefer stable class / id / data-* selectors; the selector must select an element
+  whose text is the field value.
+- If the value is combined with other text in ONE element (e.g. "Hatchback/5" mixing
+  body style and seat count), pick the tightest SUB-element that isolates it if one
+  exists; if none exists, return the best selector you can and explain the limitation
+  in "note".
+- Honor the human notes if provided — they describe exactly what to capture.'''
+
+
+async def generate_field_selector(
+    field: str,
+    html: str,
+    notes: str | None = None,
+    value_hint: str | None = None,
+) -> dict:
+    '''
+    Re-derive a CSS selector for ONE field from a narrow HTML snippet, guided by
+    optional human notes (e.g. "body style only, ignore the seat count"). Returns
+    {selector, value, note, _usage}.
+    '''
+    settings = get_settings()
+    client   = AsyncAnthropic(api_key=settings.anthropic_api_key)
+
+    parts = [f'FIELD: {field}']
+    if notes and notes.strip():
+        parts.append(f'HUMAN NOTES: {notes.strip()}')
+    if value_hint and value_hint.strip():
+        parts.append(f'EXPECTED VALUE: {value_hint.strip()}')
+    parts.append(f'HTML:\n{html}')
+    user_content = '\n'.join(parts)
+
+    response = await client.messages.create(
+        model=MODEL,
+        max_tokens=400,
+        system=FIELD_SYSTEM_PROMPT,
+        messages=[{'role': 'user', 'content': user_content}],
+    )
+    raw = ''.join(b.text for b in response.content if b.type == 'text')
+    raw = re.sub(r'^```json\s*|\s*```$', '', raw.strip())
+    try:
+        out = json.loads(raw)
+    except json.JSONDecodeError as e:
+        raise RuntimeError(f'Claude returned invalid JSON: {e}')
+
+    out['_usage'] = {
+        'input_tokens':  response.usage.input_tokens,
+        'output_tokens': response.usage.output_tokens,
+    }
+    return out
+
+
+async def generate_config(card_html: str, detail_html: str | None, hints: str | None = None) -> dict:
     settings = get_settings()
     client = AsyncAnthropic(api_key=settings.anthropic_api_key)
 
-    user_content = f'VEHICLE CARD HTML:\n{card_html}\n\n'
+    user_content = ''
+    if hints and hints.strip():
+        # Admin free-form guidance for obscure sites (e.g. "titles are prefixed
+        # 'Pre-Owned'", "the real price label is 'Bell Price'"). Highest priority.
+        user_content += (
+            'IMPORTANT HUMAN HINTS — follow these over your own inference:\n'
+            f'{hints.strip()}\n\n'
+        )
+    user_content += f'VEHICLE CARD HTML:\n{card_html}\n\n'
     if detail_html:
         user_content += f'DETAIL PAGE HTML FRAGMENTS:\n{detail_html}'
     else:

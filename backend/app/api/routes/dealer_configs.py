@@ -11,6 +11,7 @@ from app.core.security import get_current_user
 from app.models.user import User
 from app.models.dealership import Dealership
 from app.models.dealer_platform import DealerPlatform
+from app.models.dealer_platform_domain import DealerPlatformDomain
 from app.services.config_generator.generator import generate_config_for_dealership
 from app.services.config_generator.claude_generator import generate_config, generate_config_with_hints
 
@@ -232,6 +233,54 @@ async def get_config_for_domain(
     domain: str,
     session: Annotated[AsyncSession, Depends(get_session)],
 ):
+    '''
+    Unauthenticated — the extension calls this to fetch the active config for
+    whatever domain the user is browsing. Response shape is FIXED (the live
+    extension depends on it); do NOT change it.
+
+    NOTE: this endpoint has no per-user restriction and never did — the
+    domain-identity restriction (a non-admin user only receives a config for
+    THEIR OWN registered dealership_url domain) lives entirely in the extension's
+    GET_CONFIG flow (background.js), which decides whether to even call this with
+    the current page's domain. That client-side check is untouched by Part 3. See
+    the Part 3 verification note in the response to the user.
+
+    Resolution order (Part 3):
+      1. DealerPlatformDomain mapping table (domain -> platform_id -> active
+         DealerPlatform). This is how newly-approved shared configs resolve —
+         many domains can point at one platform.
+      2. Fallback: match an active DealerPlatform's source_url domain directly,
+         so existing (un-mapped) configs keep working with no backfill.
+    '''
+    # Normalize the incoming domain to a bare host (strip scheme/www), same as
+    # how the mapping table stores it, so www/non-www both resolve.
+    norm = domain.replace('https://', '').replace('http://', '')
+    if norm.startswith('www.'):
+        norm = norm[4:]
+    norm = norm.split('/')[0].split('?')[0].strip().lower()
+
+    # (1) mapping table first — try the normalized host and the raw input.
+    for candidate in {norm, domain.strip().lower()}:
+        if not candidate:
+            continue
+        mapping = (
+            await session.exec(
+                select(DealerPlatformDomain).where(
+                    DealerPlatformDomain.domain == candidate
+                )
+            )
+        ).first()
+        if mapping:
+            platform = await session.get(DealerPlatform, mapping.platform_id)
+            if platform and platform.status == 'active':
+                return {
+                    'found': True,
+                    'config': platform.config_json,
+                    'platform_id': platform.id,
+                    'platform': platform.platform_slug,
+                }
+
+    # (2) fallback: direct source_url domain match against active platforms.
     result = await session.exec(
         select(DealerPlatform).where(DealerPlatform.status == 'active')
     )

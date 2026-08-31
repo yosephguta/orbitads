@@ -31,6 +31,8 @@ from app.models.ad_event import AdEvent  # noqa — ensures table is created
 from app.models.api_usage import ApiUsage  # noqa — ensures table is created
 from app.models.dealership import Dealership  # noqa — ensures table is created
 from app.models.dealer_platform import DealerPlatform  # noqa — ensures table is created
+from app.models.dealer_platform_domain import DealerPlatformDomain  # noqa — ensures table is created
+from app.models.blocked_photo_host import BlockedPhotoHost  # noqa — ensures table is created
 from app.models.saved_script import SavedScript  # noqa — ensures table is created
 from app.models.photo_classification_cache import PhotoClassificationCache  # noqa — ensures table is created
 from app.api.routes import auth, jobs, uploads, photos, listings, billing, outros

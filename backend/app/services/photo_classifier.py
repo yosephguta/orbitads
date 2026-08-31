@@ -63,9 +63,37 @@ WALKAROUND_ORDER = [
     "interior_dashboard",
     "interior_seats",
     "interior_cargo",
+    "interior_sunroof",
     "interior_detail",
     "other",
 ]
+
+# Exterior full-car angles, most-hero first. Used by lead_with_hero().
+_EXTERIOR_ANGLES = [
+    "exterior_front_left", "exterior_front_right", "exterior_front",
+    "exterior_right", "exterior_rear_right", "exterior_rear",
+    "exterior_rear_left", "exterior_left",
+]
+
+
+def lead_with_hero(exterior_photos: list) -> list:
+    """
+    Reorder a list of exterior photo dicts so the HERO (first) matches the common
+    dealer convention: a front 3/4 shot — front-LEFT preferred, then front-right,
+    then the straight front, then whatever's first. The remaining photos keep
+    their walkaround order. (Dealers rarely lead with the straight-on hood shot;
+    AG Auto leads with front-left.)
+    """
+    if not exterior_photos:
+        return exterior_photos
+    hero = None
+    for lbl in ("exterior_front_left", "exterior_front_right", "exterior_front"):
+        hero = next((p for p in exterior_photos if p.get("label") == lbl), None)
+        if hero:
+            break
+    if hero is None:
+        return exterior_photos
+    return [hero] + [p for p in exterior_photos if p is not hero]
 
 # Valid categories Claude can return
 VALID_CATEGORIES = set(WALKAROUND_ORDER)
@@ -109,6 +137,7 @@ INTERIOR:
 - interior_dashboard — steering wheel, gauges, infotainment screen, center dash
 - interior_seats — seats, headrests, upholstery, rows of seating
 - interior_cargo — trunk or cargo/boot area, seats folded for cargo
+- interior_sunroof — sunroof / moonroof: a glass roof panel (open or closed), shot from inside looking up or of the roof glass
 - interior_detail — center console, door panel, buttons/controls, gear shifter, any other interior close-up
 
 NOT A USABLE CAR PHOTO:
@@ -120,6 +149,7 @@ Disambiguation rules:
 - LEFT = driver side, RIGHT = passenger side. Judge by which side of the car faces the camera.
 - If most of the body is NOT visible and it is a zoomed exterior part → exterior_detail (never a full exterior angle).
 - When unsure between interior_detail and other, choose interior_detail.
+- A sunroof / moonroof (glass roof panel, open or closed) is a sought-after feature → interior_sunroof, NOT exterior_detail / interior_detail / other.
 
 Return ONLY a JSON array, one object per photo IN ORDER, no markdown, no prose:
 [{"index": 1, "category": "exterior_front"}, {"index": 2, "category": "interior_seats"}]
@@ -307,7 +337,7 @@ async def classify_photo(image_url: str) -> str:
                             "CLOSE-UP EXTERIOR DETAILS (zoomed in on one part):\n"
                             "exterior_detail\n\n"
                             "INTERIOR:\n"
-                            "interior_dashboard, interior_seats, interior_cargo, interior_detail\n\n"
+                            "interior_dashboard, interior_seats, interior_cargo, interior_sunroof, interior_detail\n\n"
                             "NOT A CAR PHOTO:\n"
                             "other\n\n"
                             "Rules:\n"
@@ -316,9 +346,11 @@ async def classify_photo(image_url: str) -> str:
                             "- interior_dashboard = steering wheel area, infotainment, gauges\n"
                             "- interior_seats = seats, headrests, upholstery\n"
                             "- interior_cargo = trunk, cargo area\n"
+                            "- interior_sunroof = sunroof / moonroof glass roof panel (open or closed)\n"
                             "- interior_detail = console, door panel, controls, buttons, any other interior\n"
                             "- other = logos, dealership signs, window stickers, price sheets, QR codes\n"
-                            "- When in doubt between interior_detail and other, choose interior_detail\n\n"
+                            "- When in doubt between interior_detail and other, choose interior_detail\n"
+                            "- A sunroof/moonroof → interior_sunroof (not interior_detail/exterior_detail/other)\n\n"
                             "Reply with only the label, nothing else."
                         ),
                         },
@@ -612,12 +644,12 @@ def select_video_photos(
     }
     interior_categories = {
         "interior_dashboard", "interior_seats",
-        "interior_cargo", "interior_detail",
+        "interior_cargo", "interior_sunroof", "interior_detail",
     }
 
-    exterior_photos = [
+    exterior_photos = lead_with_hero([
         p for p in sorted_photos if p["label"] in exterior_categories
-    ]
+    ])
     interior_photos = [
         p for p in sorted_photos if p["label"] in interior_categories
     ]
