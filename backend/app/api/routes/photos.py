@@ -12,8 +12,11 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
+from sqlmodel.ext.asyncio.session import AsyncSession
+
 from app.core.security import get_current_user
 from app.core.middleware import require_active_subscription
+from app.core.database import get_session
 from app.models.user import User
 from app.services.photo_classifier import classify_photos_batch, sort_into_walkaround, lead_with_hero
 
@@ -45,6 +48,7 @@ class ClassifyResponse(BaseModel):
 async def classify_photos(
     payload: ClassifyRequest,
     current_user: Annotated[User, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_session)],
 ):
     """
     Classify car photos by angle and return them grouped and sorted.
@@ -54,9 +58,12 @@ async def classify_photos(
     """
     # Trial users who've used all 5 free videos can't import/classify — this
     # calls Claude and costs API credits. (require_active_subscription already
-    # blocks trial-expired / cancelled / past_due; this covers the video-limit
-    # case, which is not is_blocked.)
-    if current_user.subscription_status == "trial" and (current_user.trial_video_count or 0) >= 5:
+    # blocks trial-expired / cancelled / past_due / dealership-inactive; this
+    # covers the video-limit case, which is not is_blocked.) Uses the EFFECTIVE
+    # status so dealership team members (not trial) aren't limited.
+    from app.services.entitlement import resolve_entitlement
+    _ent = await resolve_entitlement(current_user, session)
+    if _ent["status"] == "trial" and (current_user.trial_video_count or 0) >= 5:
         raise HTTPException(status_code=403, detail="TRIAL_VIDEO_LIMIT")
 
     # Limit to 30 photos max to control cost

@@ -2,27 +2,24 @@ from datetime import datetime, timezone
 from typing import Annotated
 
 from fastapi import Depends, HTTPException, status
+from sqlmodel.ext.asyncio.session import AsyncSession
 
 from app.core.security import get_current_user
 from app.core.config import get_settings
+from app.core.database import get_session
 from app.models.user import User
 
 
-def require_active_subscription(
+async def require_active_subscription(
     current_user: Annotated[User, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_session)],
 ) -> User:
     """
-    Dependency that blocks access if the user's subscription is expired.
-    Use this on any route that requires an active account.
-
-    Allowed states:
-    - trial: within the 7-day trial window
-    - active: paying subscriber
-
-    Blocked states:
-    - trial expired (trial_ends_at is in the past)
-    - cancelled
-    - past_due
+    Dependency that blocks access if the user's (effective) subscription is
+    expired. Applies DEALERSHIP-PLAN inheritance via resolve_entitlement — a
+    salesperson is allowed iff their dealership's manager holds an active
+    'dealership' plan; otherwise blocked (unless they subscribe individually).
+    Managers/independents are checked on their own status.
     """
     settings = get_settings()
 
@@ -36,6 +33,23 @@ def require_active_subscription(
             }
         )
 
+    from app.services.entitlement import resolve_entitlement
+    ent = await resolve_entitlement(current_user, session)
+
+    # Dealership inheritance decides it outright.
+    if ent["source"] == "dealership":
+        return current_user  # active via the dealership plan
+    if ent["source"] == "dealership_inactive":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={
+                "error": "dealership_subscription_inactive",
+                "message": "Your dealership's subscription is no longer active. Ask your manager to renew, or subscribe individually to continue.",
+                "upgrade_url": "https://dealersorbit.com/orbitads/#pricing",
+            }
+        )
+
+    # source == 'own' — evaluate the user's own status (original logic).
     now = datetime.now(timezone.utc)
 
     # Active paying subscriber — always allow

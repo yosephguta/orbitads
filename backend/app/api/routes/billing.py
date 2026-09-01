@@ -170,6 +170,36 @@ async def _handle_checkout_complete(session_obj: dict, db):
     user.stripe_subscription_id = subscription_id
     user.subscription_status = "active"  # charged immediately, no Stripe trial
     user.purchased_plan = plan  # pro | elite | dealership
+
+    # If a DEALERSHIP SALESPERSON just bought their OWN plan, split them out into
+    # an independent account: keep the dealership's config assigned to them (as
+    # their own domain — they may still work there / can request a new one), and
+    # drop the dealership link so they leave the manager's roster and are no longer
+    # overridden by the dealership-config precedence guardrail. (Managers buying the
+    # dealership plan are role='manager' → left untouched.)
+    if user.role == "salesperson" and user.dealership_id:
+        from app.models.dealership import Dealership
+        from app.models.dealer_platform import DealerPlatform
+        from app.models.dealer_platform_domain import DealerPlatformDomain
+        dealership = await db.get(Dealership, user.dealership_id)
+        config_domain = None
+        if dealership and dealership.platform_id:
+            config_domain = (await db.exec(
+                select(DealerPlatformDomain.domain).where(
+                    DealerPlatformDomain.platform_id == dealership.platform_id
+                )
+            )).first()
+            if not config_domain:
+                platform = await db.get(DealerPlatform, dealership.platform_id)
+                if platform and platform.source_url:
+                    config_domain = (platform.source_url.replace("https://", "")
+                                     .replace("http://", "").replace("www.", "")
+                                     .split("/")[0].strip().lower()) or None
+        if config_domain:
+            user.dealership_url = config_domain   # keep the dealership's config as their own
+        user.role = "independent"
+        user.dealership_id = None
+
     db.add(user)
     await db.commit()
 

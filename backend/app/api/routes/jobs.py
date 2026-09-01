@@ -732,11 +732,18 @@ async def create_job(
             detail="Please provide either a VIN or a listing URL.",
         )
 
+    # Effective entitlement (dealership inheritance) — a dealership salesperson
+    # reads active/'dealership' even though their own row is trial/none, so the
+    # gates below don't misfire on them. (require_active_subscription already
+    # blocked dealership_inactive + own-expired before we got here.)
+    from app.services.entitlement import resolve_entitlement
+    _ent = await resolve_entitlement(current_user, session)
+    eff_status, eff_plan = _ent["status"], _ent["plan"]
+
     # Trial-completion gate (authoritative — mirrors the pipeline so a bypassed
-    # client can't create jobs after the trial is finished). Time-expiry is also
-    # blocked by require_active_subscription; the 5-video cap is enforced only
-    # here + in the pipeline, so it must be checked at creation too.
-    if current_user.subscription_status == "trial":
+    # client can't create jobs after the trial is finished). The 5-video cap is
+    # enforced only here + in the pipeline. Only applies to OWN trial accounts.
+    if eff_status == "trial":
         from app.core.config import get_settings
         settings = get_settings()
         is_dev = bool(settings.dev_test_email and current_user.email == settings.dev_test_email)
@@ -752,10 +759,11 @@ async def create_job(
 
     # Server-side entitlement gate (authoritative — the extension's outro gate is
     # UX only and can be bypassed by editing the client). Personal outros are an
-    # Elite/Dealership feature; trial users get them during the trial.
+    # Elite/Dealership feature; trial users get them during the trial. Uses the
+    # EFFECTIVE plan so dealership team members (plan='dealership') are allowed.
     if payload.video_type == "with_outro":
-        is_trial   = current_user.subscription_status == "trial"
-        has_outro  = current_user.purchased_plan in ("elite", "dealership")
+        is_trial   = eff_status == "trial"
+        has_outro  = eff_plan in ("elite", "dealership")
         if not is_trial and not has_outro:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,

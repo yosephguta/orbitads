@@ -22,6 +22,19 @@ from app.core.security import (
 )
 from app.models.user import User, UserCreate, UserRead, UserUpdate
 from app.models.dealership import Dealership
+from app.models.dealer_platform import DealerPlatform
+from app.models.dealer_platform_domain import DealerPlatformDomain
+
+
+def _bare_domain(url):
+    """Lowercase bare host from a URL/domain (no scheme/www/path/query)."""
+    if not url:
+        return None
+    d = str(url).replace("https://", "").replace("http://", "")
+    if d.startswith("www."):
+        d = d[4:]
+    d = d.split("/")[0].split("?")[0].strip().lower()
+    return d or None
 from app.services.s3 import upload_bytes, create_presigned_download_url, key_exists
 from app.services.email import send_verification_email, send_welcome_email
 
@@ -353,18 +366,56 @@ async def me(
 ):
     dealership_required_tagline = None
     dealership_required_tagline_es = None
+    # Domains this account may use dealer-site configs for. DEALER TAKES PRECEDENCE:
+    # if the user is in a dealership that has an active config, they inherit ONLY
+    # that dealership's config domain(s) — their own pre-assigned dealership_url is
+    # ignored. Otherwise (independent / pre-assigned) they get their own domain.
+    # Computed on read so config re-assignment to the dealership propagates to all
+    # its users with no stale-sync race. (cars.com/cargurus are universal — handled
+    # in the extension, not gated by this list.)
+    allowed_config_domains = []
     if current_user.dealership_id:
         dealership = await session.get(Dealership, current_user.dealership_id)
         if dealership:
             dealership_required_tagline = dealership.required_tagline
             dealership_required_tagline_es = dealership.required_tagline_es
+            if dealership.platform_id:
+                platform = await session.get(DealerPlatform, dealership.platform_id)
+                if platform and platform.status == "active":
+                    doms = set()
+                    d = _bare_domain(platform.source_url)
+                    if d:
+                        doms.add(d)
+                    rows = (await session.exec(
+                        select(DealerPlatformDomain.domain).where(
+                            DealerPlatformDomain.platform_id == platform.id
+                        )
+                    )).all()
+                    doms.update(x for x in rows if x)
+                    allowed_config_domains = sorted(doms)
+    if not allowed_config_domains and current_user.dealership_url:
+        d = _bare_domain(current_user.dealership_url)
+        if d:
+            allowed_config_domains = [d]
 
     settings = get_settings()
     now = datetime.now(timezone.utc)
     subscription_message = None
     is_blocked = False
 
-    if current_user.subscription_status == "trial":
+    # Effective entitlement (dealership inheritance). eff_status/eff_plan are what
+    # the extension shows + gates on — a dealership salesperson reads 'active' /
+    # 'dealership' here even though their own row is trial/none.
+    from app.services.entitlement import resolve_entitlement
+    ent = await resolve_entitlement(current_user, session)
+    eff_status, eff_plan, ent_source = ent["status"], ent["plan"], ent["source"]
+
+    if ent_source == "dealership":
+        pass  # inherited active — not blocked
+    elif ent_source == "dealership_inactive":
+        subscription_message = "dealership_inactive"
+        is_blocked = True
+    elif eff_status == "trial":
         if current_user.trial_ends_at is not None:
             trial_end = current_user.trial_ends_at
             if trial_end.tzinfo is None:
@@ -375,7 +426,7 @@ async def me(
                 subscription_message = "trial_expired"
                 is_blocked = True
 
-    elif current_user.subscription_status == "past_due":
+    elif eff_status == "past_due":
         updated = current_user.updated_at
         if updated is not None:
             if updated.tzinfo is None:
@@ -387,16 +438,22 @@ async def me(
             subscription_message = "past_due"
             is_blocked = True
 
-    elif current_user.subscription_status in ("cancelled", "inactive"):
+    elif eff_status in ("cancelled", "inactive"):
         subscription_message = "cancelled"
         is_blocked = True
 
     return {
         **UserRead.model_validate(current_user).model_dump(),
+        # Override with EFFECTIVE plan/status so the extension shows "Dealership"
+        # and gates correctly for inherited team members.
+        "subscription_status": eff_status,
+        "purchased_plan": eff_plan,
+        "plan_source": ent_source,  # 'own' | 'dealership' | 'dealership_inactive'
         "dealership_required_tagline": dealership_required_tagline,
         "dealership_required_tagline_es": dealership_required_tagline_es,
         "subscription_message": subscription_message,
         "is_blocked": is_blocked,
+        "allowed_config_domains": allowed_config_domains,
     }
 
 

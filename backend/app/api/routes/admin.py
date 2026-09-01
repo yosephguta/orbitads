@@ -289,9 +289,11 @@ async def assign_manager(
             other.manager_user_id = None
             session.add(other)
 
-    # Promote + attach the target.
+    # Promote + attach the target. Dealer takes precedence: the account's
+    # dealership_name follows the dealership it's assigned to.
     target.role = "manager"
     target.dealership_id = dealership_id
+    target.dealership_name = dealership.dealership_name
     target.updated_at = datetime.utcnow()
     session.add(target)
 
@@ -331,11 +333,20 @@ async def create_user(
     if sub_status is None:
         sub_status = "active" if payload.purchased_plan else "trial"
 
+    # Dealer takes precedence: if attached to a dealership, the account's
+    # dealership_name follows it.
+    dealership_name = payload.dealership_name or ""
+    if payload.dealership_id:
+        d = await session.get(Dealership, payload.dealership_id)
+        if d:
+            dealership_name = d.dealership_name
+
     user = User(
         email=email,
         first_name=payload.first_name.strip(),
         last_name=payload.last_name.strip(),
         full_name=payload.full_name.strip(),
+        dealership_name=dealership_name,
         hashed_password=hash_password(payload.password),
         role="salesperson",
         is_verified=True,      # admin-created — no unverified state to represent
@@ -385,6 +396,9 @@ async def bulk_assign(
             continue
 
         user.dealership_id = dealership_id
+        # Dealer takes precedence: the account's dealership_name follows the
+        # dealership it's assigned to (e.g. a "Bob Bell" signup → "Apple Ford").
+        user.dealership_name = dealership.dealership_name
         if payload.purchased_plan is not None:
             user.purchased_plan = payload.purchased_plan
         if payload.subscription_status is not None:
@@ -1997,6 +2011,7 @@ class ApproveConfigRequest(BaseModel):
     # If set, map the domain to this already-active platform instead of the
     # newly-generated one (which gets rejected as a duplicate).
     map_to_existing_platform_id: Optional[int] = None
+    notify: bool = True   # email the requester the "config ready" notice
 
 
 async def _upsert_platform_domain(
@@ -2111,8 +2126,8 @@ async def approve_generated_config(
 
     await session.commit()
 
-    # Email AFTER commit (fire-and-forget; never raises).
-    if notify_target:
+    # Email AFTER commit (fire-and-forget; never raises). Suppressible via notify=false.
+    if notify_target and payload.notify:
         send_dealer_config_ready_email(notify_target[0], notify_target[1], domain)
         user_notified = True
 
@@ -2136,6 +2151,7 @@ async def approve_generated_config(
 # ── Assign a config directly to a salesperson (for testing / individual use) ──
 class AssignToSalespersonBody(BaseModel):
     email: str
+    notify: bool = True   # email the salesperson the "config ready" notice
 
 
 @router.post("/dealer-platforms/{platform_id}/assign-to-salesperson")
@@ -2198,7 +2214,8 @@ async def assign_platform_to_salesperson(
     await session.commit()
 
     # Tell the salesperson their config is live (fire-and-forget; never raises).
-    send_dealer_config_ready_email(user.email, user.full_name, domain)
+    if payload.notify:
+        send_dealer_config_ready_email(user.email, user.full_name, domain)
 
     return {
         "message": (
