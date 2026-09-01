@@ -15,21 +15,26 @@ router = APIRouter(prefix='/saved-scripts', tags=['saved-scripts'])
 
 
 class SavedScriptCreate(BaseModel):
-    name:        str
-    prompt_text: str
+    name:         str
+    prompt_text:  str
+    content_type: str = 'video'
 
 
 @router.get('/')
 async def list_saved_scripts(
+    content_type: Optional[str] = None,
     session:      AsyncSession = Depends(get_session),
     current_user: Annotated[User, Depends(get_current_user)] = None,
 ):
-    result = await session.exec(
+    query = (
         select(SavedScript)
         .where(SavedScript.user_id == current_user.id)
-        .order_by(SavedScript.last_used_at.desc().nullslast(),
-                  SavedScript.created_at.desc())
     )
+    if content_type:
+        query = query.where(SavedScript.content_type == content_type)
+    query = query.order_by(SavedScript.last_used_at.desc().nullslast(),
+                           SavedScript.created_at.desc())
+    result = await session.exec(query)
     scripts = result.all()
     return {
         'scripts': [
@@ -37,6 +42,7 @@ async def list_saved_scripts(
                 'id':          s.id,
                 'name':        s.name,
                 'prompt_text': s.prompt_text,
+                'content_type': s.content_type,
                 'use_count':   s.use_count,
                 'created_at':  s.created_at,
                 'last_used_at': s.last_used_at,
@@ -61,10 +67,12 @@ async def create_saved_script(
             detail='Maximum 20 saved scripts allowed. Delete one to save a new one.'
         )
 
+    content_type = payload.content_type if payload.content_type in ('video', 'caption') else 'video'
     script = SavedScript(
-        user_id     = current_user.id,
-        name        = payload.name.strip()[:100],
-        prompt_text = payload.prompt_text.strip(),
+        user_id      = current_user.id,
+        name         = payload.name.strip()[:100],
+        prompt_text  = payload.prompt_text.strip(),
+        content_type = content_type,
     )
     session.add(script)
     await session.commit()
@@ -74,6 +82,7 @@ async def create_saved_script(
         'id':          script.id,
         'name':        script.name,
         'prompt_text': script.prompt_text,
+        'content_type': script.content_type,
         'use_count':   script.use_count,
         'created_at':  script.created_at,
     }

@@ -50,6 +50,7 @@ class GenerateRequest(BaseModel):
     dealership_name: Optional[str] = None
     listing_url:     Optional[str] = None
     theme:           Optional[str] = 'value'
+    custom_prompt:   Optional[str] = None
     language:        Optional[str] = 'en'
 
 
@@ -114,6 +115,12 @@ async def generate_listing(
         'commuter':    'emphasize fuel efficiency, comfort, and low cost of ownership',
     }
     theme_guidance = _THEME_GUIDANCE.get(payload.theme or 'value', _THEME_GUIDANCE['value'])
+    # Custom prompt bypasses the preset theme entirely (mirrors the video script generator).
+    custom_prompt = (payload.custom_prompt or "").strip()
+    if custom_prompt:
+        theme_directive = f"Their style/prompt: {custom_prompt}"
+    else:
+        theme_directive = f"Theme focus: {theme_guidance}"
 
     system_prompt = (
         "You are a car salesperson writing a social media post to showcase a vehicle you have available. "
@@ -166,7 +173,7 @@ Vehicle: {vehicle_info}
 Price: {price_clean}
 Mileage: {mileage_str}
 VIN: {payload.vin or 'Available on request'}
-Theme focus: {theme_guidance}
+{theme_directive}
 
 FORMAT (keep this social-media style with emojis and bullets):
 • Title: max 100 chars — "Year Make Model Trim - $Price", no dealership name
@@ -448,6 +455,7 @@ class FbPostCaptionRequest(BaseModel):
     price:    Optional[str] = None
     mileage:  Optional[str] = None
     theme:    str = "hype"
+    custom_prompt: Optional[str] = None
     language: Optional[str] = 'en'
 
 
@@ -480,6 +488,11 @@ async def generate_fb_post_caption(
     price_clean  = payload.price or "Call for price"
     mileage_str  = payload.mileage or "N/A"
     tone         = _THEME_TONES.get(payload.theme, _THEME_TONES["hype"])
+    # Custom prompt bypasses the preset theme entirely (mirrors the video script generator).
+    custom_prompt = (payload.custom_prompt or "").strip()
+    theme_directive = (
+        f"Their style/prompt: {custom_prompt}" if custom_prompt else f"Theme/Vibe: {tone}"
+    )
 
     if payload.language == 'es':
         if current_user.phone_number:
@@ -503,7 +516,7 @@ async def generate_fb_post_caption(
 Vehicle: {vehicle_info}
 Price: {price_clean}
 Mileage: {mileage_str}
-Theme/Vibe: {tone}
+{theme_directive}
 
 FORMATTING RULES — CRITICAL:
 - Each sentence or bullet point MUST be on its own line

@@ -12,6 +12,7 @@ class SavedScript(SQLModel, table=True):
     user_id:      int           = Field(foreign_key='users.id', index=True)
     name:         str           = Field(max_length=100)
     prompt_text:  str           = Field(sa_column=Column(sa.Text))
+    content_type: str           = Field(default='video', max_length=20)  # 'video' | 'caption'
     use_count:    int           = Field(default=0)
     created_at:   datetime      = Field(default_factory=datetime.utcnow)
     last_used_at: Optional[datetime] = Field(default=None)
