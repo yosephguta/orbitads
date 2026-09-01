@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import asyncio
+import os
+import tempfile
 import time
 from typing import Annotated, Optional
 
@@ -21,6 +24,61 @@ ALLOWED_VIDEO_TYPES = {
     "video/webm",
     "video/x-m4v",
 }
+
+
+async def _compress_video(data: bytes, in_ext: str) -> bytes:
+    """
+    Transcode to H.264 MP4, capping height at 1080p, ~2-4 Mbps.
+    Runs ffmpeg as a subprocess so the event loop stays free.
+    Falls back to raw bytes on any error (ffmpeg missing, encode failure, etc.)
+    so an upload never crashes because of compression.
+    """
+    tmp_in = tmp_out = None
+    try:
+        import imageio_ffmpeg
+        ffmpeg_exe = imageio_ffmpeg.get_ffmpeg_exe()
+
+        with tempfile.NamedTemporaryFile(suffix=f".{in_ext}", delete=False) as f:
+            f.write(data)
+            tmp_in = f.name
+        tmp_out = tmp_in.rsplit(".", 1)[0] + "_out.mp4"
+
+        proc = await asyncio.create_subprocess_exec(
+            ffmpeg_exe, "-y",
+            "-i", tmp_in,
+            # Scale height to 1080 if taller, otherwise keep original size.
+            # trunc(...) rounds width down to the nearest even number (required by libx264).
+            "-vf", "scale='if(gt(ih,1080),trunc(iw*1080/ih/2)*2,iw)':'if(gt(ih,1080),1080,ih)'",
+            "-c:v", "libx264", "-crf", "23", "-preset", "fast",
+            "-maxrate", "4M", "-bufsize", "8M",
+            "-c:a", "aac", "-b:a", "128k",
+            "-movflags", "+faststart",
+            tmp_out,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        _, stderr = await proc.communicate()
+
+        if proc.returncode != 0:
+            print(f"[outro] ffmpeg failed (rc={proc.returncode}): {stderr.decode()[-500:]}")
+            return data
+
+        with open(tmp_out, "rb") as f:
+            compressed = f.read()
+
+        print(f"[outro] compressed {len(data) // 1024}KB → {len(compressed) // 1024}KB")
+        return compressed
+
+    except FileNotFoundError:
+        print("[outro] ffmpeg not found — uploading raw video")
+        return data
+    except Exception as exc:
+        print(f"[outro] compression error ({exc}) — uploading raw video")
+        return data
+    finally:
+        for path in (tmp_in, tmp_out):
+            if path and os.path.exists(path):
+                os.unlink(path)
 
 
 @router.post("/upload", response_model=OutroVideoRead, status_code=status.HTTP_201_CREATED)
@@ -53,11 +111,13 @@ async def upload_outro(
         except (ValueError, TypeError):
             parsed_duration = None
 
-    ext = (file.filename or "outro.mp4").rsplit(".", 1)[-1].lower() or "mp4"
-    s3_key = s3.make_outro_key(current_user.id, int(time.time()), ext)
+    in_ext = (file.filename or "outro.mp4").rsplit(".", 1)[-1].lower() or "mp4"
+    # S3 key always ends in .mp4 — compression outputs MP4 regardless of input format.
+    s3_key = s3.make_outro_key(current_user.id, int(time.time()), "mp4")
 
     data = await file.read()
-    s3.upload_bytes(data, s3_key, file.content_type or "video/mp4")
+    compressed = await _compress_video(data, in_ext)
+    await asyncio.to_thread(s3.upload_bytes, compressed, s3_key, "video/mp4")
 
     outro = OutroVideo(
         user_id=current_user.id,

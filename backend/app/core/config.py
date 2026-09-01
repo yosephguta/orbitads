@@ -22,7 +22,7 @@ class Settings(BaseSettings):
     app_name: str = "DealersOrbit"
     app_version: str = "0.1.0"
     environment: str = "development"   # development | production
-    debug: bool = True
+    debug: bool = False
 
     # ── Development Only ──────────────────────────────────────
     skip_email_verification: bool = False   # bypass verification in dev

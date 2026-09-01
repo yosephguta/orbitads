@@ -1,13 +1,14 @@
 from __future__ import annotations
 from datetime import datetime
 from typing import Annotated, Optional
-from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
+from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks, Request
 from pydantic import BaseModel
 from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from app.core.database import get_session
 from app.core.security import get_current_user
+from app.core.rate_limit import limiter
 from app.models.user import User
 from app.models.dealership import Dealership
 from app.models.dealer_platform import DealerPlatform
@@ -229,9 +230,11 @@ async def generate_config_from_html(
 
 
 @router.get('/domain/{domain}')
+@limiter.limit("30/minute")
 async def get_config_for_domain(
+    request: Request,
     domain: str,
-    session: Annotated[AsyncSession, Depends(get_session)],
+    session: AsyncSession = Depends(get_session),
 ):
     '''
     Unauthenticated — the extension calls this to fetch the active config for

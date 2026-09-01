@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 import json
 import stripe
 from typing import Annotated, Optional
@@ -11,6 +9,7 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 from app.core.config import get_settings
 from app.core.database import get_session
 from app.core.security import get_current_user
+from app.core.rate_limit import limiter
 from app.models.user import User
 
 settings = get_settings()
@@ -268,7 +267,8 @@ class ContactSalesRequest(BaseModel):
 
 
 @router.post("/contact-sales")
-async def contact_sales(payload: ContactSalesRequest):
+@limiter.limit("5/minute")
+async def contact_sales(request: Request, payload: ContactSalesRequest):
     """Website 'Contact Sales' form — emails the sales team via Resend."""
     try:
         import resend

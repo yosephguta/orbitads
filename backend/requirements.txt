@@ -31,6 +31,7 @@ google-generativeai>=0.5.0       # swappable photo-classifier provider
 
 # ── Image processing ──────────────────────────────────────────
 Pillow>=10.0.0                   # downsample photos before vision classification
+imageio-ffmpeg>=0.4.0            # bundled ffmpeg binary for outro video compression
 
 # ── HTML parsing ──────────────────────────────────────────────
 beautifulsoup4>=4.12.0           # admin dealer-config-generator preview (re-run selectors vs pasted HTML)
@@ -51,6 +52,9 @@ playwright==1.49.0
 
 # ── Billing ───────────────────────────────────────────────────
 stripe==15.1.0
+
+# ── Rate limiting ─────────────────────────────────────────────
+slowapi==0.1.10                  # per-IP rate limiting on public unauthenticated endpoints
 
 # ── Email ─────────────────────────────────────────────────────
 resend==2.30.1

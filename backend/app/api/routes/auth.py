@@ -658,3 +658,30 @@ async def request_dealer_config(
         'message': 'Configuration request submitted. Your dealer site will be configured within 24 hours.',
         'requested_at': current_user.dealer_config_requested_at,
     }
+
+
+@router.post("/record-trial-use")
+async def record_trial_use(
+    current_user: Annotated[User, Depends(get_current_user)],
+    session: Annotated[SQLModelAsyncSession, Depends(get_session)],
+):
+    """
+    Increment trial_video_count for photos-only listings.
+
+    Photos-only ads never hit the video pipeline, so the pipeline's own
+    increment never fires for them. This endpoint lets the extension record
+    a use after a photos-only job completes, keeping the 5-item cap consistent
+    across all ad types.
+
+    No-ops silently for non-trial users so the call site doesn't need to branch.
+    Returns the new count so the extension can update its local cache.
+    """
+    if current_user.subscription_status != 'trial':
+        return {'trial_video_count': current_user.trial_video_count}
+
+    current_user.trial_video_count = (current_user.trial_video_count or 0) + 1
+    session.add(current_user)
+    await session.commit()
+    await session.refresh(current_user)
+
+    return {'trial_video_count': current_user.trial_video_count}
