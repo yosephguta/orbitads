@@ -1,11 +1,9 @@
-from __future__ import annotations
-
 import secrets
 import uuid
 from datetime import datetime, timezone, timedelta
-from typing import Annotated
+from typing import Annotated, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from fastapi.responses import RedirectResponse
 from fastapi.security import OAuth2PasswordRequestForm
 from pydantic import BaseModel
@@ -14,6 +12,7 @@ from sqlmodel.ext.asyncio.session import AsyncSession as SQLModelAsyncSession
 
 from app.core.database import get_session
 from app.core.config import get_settings
+from app.core.rate_limit import limiter
 from app.core.security import (
     create_access_token,
     get_current_user,
@@ -54,9 +53,11 @@ _voice_preview_cache: dict[str, str] = {}  # voice_id → presigned S3 URL
 
 # ── Register ──────────────────────────────────────────────────
 @router.post("/register", status_code=status.HTTP_201_CREATED)
+@limiter.limit("5/minute")
 async def register(
+    request: Request,
     payload: UserCreate,
-    session: Annotated[SQLModelAsyncSession, Depends(get_session)],
+    session: SQLModelAsyncSession = Depends(get_session),
 ):
     if not payload.terms_agreed:
         raise HTTPException(
@@ -176,9 +177,11 @@ async def verify_email(
 
 # ── Login ─────────────────────────────────────────────────────
 @router.post("/login")
+@limiter.limit("10/minute")
 async def login(
-    form: Annotated[OAuth2PasswordRequestForm, Depends()],
-    session: Annotated[SQLModelAsyncSession, Depends(get_session)],
+    request: Request,
+    form: OAuth2PasswordRequestForm = Depends(),
+    session: SQLModelAsyncSession = Depends(get_session),
 ):
     result = await session.exec(select(User).where(User.email == form.username))
     user = result.first()
@@ -218,9 +221,11 @@ class ResetPasswordRequest(BaseModel):
 
 
 @router.post("/forgot-password")
+@limiter.limit("5/minute")
 async def forgot_password(
+    request: Request,
     payload: ForgotPasswordRequest,
-    session: Annotated[SQLModelAsyncSession, Depends(get_session)],
+    session: SQLModelAsyncSession = Depends(get_session),
 ):
     result = await session.exec(
         select(User).where(User.email == payload.email.lower().strip())
@@ -318,9 +323,11 @@ class SupportRequest(BaseModel):
 
 
 @router.post("/support/contact")
+@limiter.limit("5/minute")
 async def contact_support(
+    request: Request,
     payload: SupportRequest,
-    current_user: Annotated[User, Depends(get_current_user)],
+    current_user: User = Depends(get_current_user),
 ):
     """
     In-extension "Contact Support" form. Emails mail@dealersorbit.com with the
