@@ -8,16 +8,21 @@ Called by the Chrome extension after scraping a listing.
 Returns classified photos so the user can review before generating.
 """
 
+import asyncio
+import uuid
+
 from typing import Annotated
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from pydantic import BaseModel
 
 from sqlmodel.ext.asyncio.session import AsyncSession
 
+from app.core.config import get_settings
 from app.core.security import get_current_user
 from app.core.middleware import require_active_subscription
 from app.core.database import get_session
 from app.models.user import User
+from app.services import s3 as s3_service
 from app.services.photo_classifier import classify_photos_batch, sort_into_walkaround, lead_with_hero
 
 router = APIRouter(
@@ -115,3 +120,35 @@ async def classify_photos(
         additional=additional,
         other=other,
     )
+
+
+@router.post("/upload")
+async def upload_user_photo(
+    current_user: Annotated[User, Depends(get_current_user)],
+    file: UploadFile = File(...),
+):
+    """
+    Upload a photo from local disk to S3 and return its public URL.
+    Called when the user adds a custom photo in the photo review screen.
+    The returned URL is stored in reviewPhotos so it survives popup close/reopen
+    and is accessible by Shotstack during video generation.
+    """
+    content_type = file.content_type or "image/jpeg"
+    if not content_type.startswith("image/"):
+        raise HTTPException(status_code=400, detail="File must be an image")
+
+    orig = file.filename or "photo.jpg"
+    ext = orig.rsplit(".", 1)[-1].lower() if "." in orig else "jpg"
+    if ext not in {"jpg", "jpeg", "png", "webp"}:
+        ext = "jpg"
+
+    data = await file.read()
+    s3_key = f"public/user_photos/{current_user.id}/{uuid.uuid4().hex}.{ext}"
+
+    await asyncio.to_thread(s3_service.upload_bytes, data, s3_key, content_type)
+
+    settings = get_settings()
+    public_url = (
+        f"https://{s3_service.BUCKET}.s3.{settings.aws_region}.amazonaws.com/{s3_key}"
+    )
+    return {"url": public_url}

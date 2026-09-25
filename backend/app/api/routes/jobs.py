@@ -358,25 +358,15 @@ async def _run_pipeline(job_id: int, user_id: int):
                 )
                 audio_duration = get_audio_duration(audio_s3_key)
 
-                # Reviewed car photos
+                # Use the user's reviewed photo order directly — they arranged
+                # these in the review screen; re-classifying here would override
+                # their deliberate placement (Bug: uploaded photo in wrong position).
                 car_photos = DEFAULT_CAR_PHOTOS
                 if job_car_photo_urls:
                     try:
                         car_photos = json.loads(job_car_photo_urls)
                     except Exception:
                         car_photos = DEFAULT_CAR_PHOTOS
-
-                try:
-                    from app.services.photo_classifier import get_walkaround_photos
-                    car_photos = await get_walkaround_photos(
-                        photo_urls=car_photos,
-                        exterior_count=5,
-                        interior_count=2,
-                    )
-                    print(f"Walkaround photos: {len(car_photos)}")
-                except Exception as e:
-                    print(f"Walkaround ordering failed: {e}")
-                    car_photos = car_photos[:7]
 
                 highlights = _build_highlights(vd, user_dealership_name)
                 from app.services.vin_decoder import vehicle_summary
