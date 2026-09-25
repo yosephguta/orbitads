@@ -10,6 +10,7 @@ from app.models.listing import Listing  # noqa
 from app.models.outro_video import OutroVideo  # noqa
 from app.models.dealer_platform_domain import DealerPlatformDomain  # noqa
 from app.models.blocked_photo_host import BlockedPhotoHost  # noqa
+from app.models.partial_lead import PartialLead  # noqa
 
 settings = get_settings()
 

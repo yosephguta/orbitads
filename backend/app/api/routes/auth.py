@@ -1,9 +1,10 @@
+import asyncio
 import secrets
 import uuid
 from datetime import datetime, timezone, timedelta
 from typing import Annotated, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request, status
 from fastapi.responses import RedirectResponse
 from fastapi.security import OAuth2PasswordRequestForm
 from pydantic import BaseModel
@@ -23,6 +24,7 @@ from app.models.user import User, UserCreate, UserRead, UserUpdate
 from app.models.dealership import Dealership
 from app.models.dealer_platform import DealerPlatform
 from app.models.dealer_platform_domain import DealerPlatformDomain
+from app.models.partial_lead import PartialLead
 
 
 def _bare_domain(url):
@@ -146,6 +148,28 @@ async def register(
             })
         except Exception as e:
             print(f'Failed to send dealership signup notification: {e}')
+
+    # Admin notification for every new signup
+    try:
+        import resend
+        settings = get_settings()
+        resend.api_key = settings.resend_api_key
+
+        resend.Emails.send({
+            'from':    'DealersOrbit <notifications@mail.dealersorbit.com>',
+            'to':      ['mail@dealersorbit.com'],
+            'subject': f'✅ New Signup — {user.first_name} {user.last_name}',
+            'html':    f'''
+                <h2>New User Registered</h2>
+                <p><strong>Name:</strong> {user.first_name} {user.last_name}</p>
+                <p><strong>Email:</strong> {user.email}</p>
+                <p><strong>Phone:</strong> {user.phone_number or 'Not provided'}</p>
+                <p><strong>Dealership:</strong> {user.dealership_name or 'Not provided'}</p>
+                <p><strong>Signup plan:</strong> {user.signup_plan}</p>
+            ''',
+        })
+    except Exception as e:
+        print(f'Failed to send new-signup admin notification: {e}')
 
     return {"message": "Account created! Please check your email to verify your account."}
 
@@ -692,3 +716,75 @@ async def record_trial_use(
     await session.refresh(current_user)
 
     return {'trial_video_count': current_user.trial_video_count}
+
+
+# ── Step 1 partial-lead capture ───────────────────────────────
+
+async def _check_and_send_lead_email(lead_id: int):
+    """
+    Runs 60 seconds after Step 1 completion.
+    If the user hasn't finished registration (no User row with this email),
+    sends an admin notification to mail@dealersorbit.com.
+    """
+    await asyncio.sleep(60)
+
+    from app.core.database import AsyncSessionLocal
+    async with AsyncSessionLocal() as session:
+        lead = await session.get(PartialLead, lead_id)
+        if not lead or lead.lead_email_sent:
+            return
+
+        result = await session.exec(select(User).where(User.email == lead.email))
+        if result.first():
+            return
+
+        try:
+            import resend
+            settings = get_settings()
+            resend.api_key = settings.resend_api_key
+
+            resend.Emails.send({
+                'from':    'DealersOrbit <notifications@mail.dealersorbit.com>',
+                'to':      ['mail@dealersorbit.com'],
+                'subject': f'🔥 New Lead — {lead.first_name} {lead.last_name}',
+                'html':    f'''
+                    <h2>New Lead (Step 1 completed, registration not finished)</h2>
+                    <p><strong>Name:</strong> {lead.first_name} {lead.last_name}</p>
+                    <p><strong>Email:</strong> {lead.email}</p>
+                    <p><strong>Phone:</strong> {lead.phone_number or 'Not provided'}</p>
+                    <p><strong>Captured at:</strong> {lead.created_at}</p>
+                ''',
+            })
+            lead.lead_email_sent = True
+            session.add(lead)
+            await session.commit()
+        except Exception as e:
+            print(f'Failed to send lead email: {e}')
+
+
+class Step1LeadRequest(BaseModel):
+    first_name:   str
+    last_name:    str
+    email:        str
+    phone_number: Optional[str] = None
+
+
+@router.post('/leads/step1-complete')
+async def capture_step1_lead(
+    payload: Step1LeadRequest,
+    background_tasks: BackgroundTasks,
+    session: SQLModelAsyncSession = Depends(get_session),
+):
+    lead = PartialLead(
+        first_name=payload.first_name.strip(),
+        last_name=payload.last_name.strip(),
+        email=payload.email.lower().strip(),
+        phone_number=payload.phone_number or None,
+    )
+    session.add(lead)
+    await session.commit()
+    await session.refresh(lead)
+
+    background_tasks.add_task(_check_and_send_lead_email, lead.id)
+
+    return {'lead_id': lead.id}
