@@ -17,6 +17,9 @@ class OutroVideo(SQLModel, table=True):
     created_at: datetime = Field(
         default_factory=datetime.utcnow
     )
+    # Soft-delete: NULL means active; set to deletion timestamp instead of removing
+    # the row, so jobs.outro_video_id FK references remain intact (bug #2 fix).
+    deleted_at: Optional[datetime] = Field(default=None)
 
 
 class OutroVideoRead(SQLModel):

@@ -138,10 +138,11 @@ async def list_outros(
     current_user: Annotated[User, Depends(get_current_user)],
     session: Annotated[AsyncSession, Depends(get_session)],
 ):
-    """Return all of the current user's outro videos with fresh presigned URLs."""
+    """Return all of the current user's active outro videos with fresh presigned URLs."""
     result = await session.exec(
         select(OutroVideo)
         .where(OutroVideo.user_id == current_user.id)
+        .where(OutroVideo.deleted_at == None)  # noqa: E711 — SQLModel uses == None for IS NULL
         .order_by(OutroVideo.created_at.desc())
     )
     outros = result.all()
@@ -158,15 +159,31 @@ async def delete_outro(
     current_user: Annotated[User, Depends(get_current_user)],
     session: Annotated[AsyncSession, Depends(get_session)],
 ):
-    """Delete an outro video from S3 and the database."""
+    """
+    Soft-delete an outro video.
+
+    Sets deleted_at instead of removing the row so that jobs.outro_video_id FK
+    references survive (a hard DELETE raises ForeignKeyViolationError when past
+    jobs reference the outro).  The S3 file is deleted after the DB commit so
+    the row is always marked before any file operation runs.
+    """
+    from datetime import datetime
+
     outro = await session.get(OutroVideo, outro_id)
-    if not outro or outro.user_id != current_user.id:
+    if not outro or outro.user_id != current_user.id or outro.deleted_at is not None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Outro not found.")
 
-    try:
-        s3.delete_object(outro.s3_key)
-    except Exception:
-        pass  # S3 failure shouldn't block DB cleanup
+    s3_key = outro.s3_key  # capture before commit in case ORM expires the object
 
-    await session.delete(outro)
+    # 1. Mark deleted in the DB first — commit before touching S3.
+    outro.deleted_at = datetime.utcnow()
+    session.add(outro)
     await session.commit()
+
+    # 2. Delete the S3 file asynchronously after the commit.
+    #    Use asyncio.to_thread so the synchronous boto3 call doesn't block the
+    #    event loop (same pattern as bug #49/#52).  Failure is non-fatal.
+    try:
+        await asyncio.to_thread(s3.delete_object, s3_key)
+    except Exception as exc:
+        print(f"[outro] S3 delete failed for {s3_key}: {exc} — row already marked deleted")
