@@ -28,10 +28,11 @@ async def get_user_weekly_stats(
     mp_posts     = [e for e in events if e.event_type == 'posted_marketplace']
     fb_posts     = [e for e in events if e.event_type == 'posted_fb_post']
     group_posts  = [e for e in events if e.event_type == 'posted_fb_groups']
+    reel_posts   = [e for e in events if e.event_type == 'posted_fb_reel']
     sold         = [e for e in events if e.event_type == 'sold_detected']
 
     total_generated = len(generated)
-    total_posted    = len(mp_posts) + len(fb_posts) + len(group_posts)
+    total_posted    = len(mp_posts) + len(fb_posts) + len(group_posts) + len(reel_posts)
     post_rate       = round(total_posted / total_generated * 100) if total_generated > 0 else 0
 
     themes = [e.theme_used for e in generated if e.theme_used]
@@ -43,7 +44,7 @@ async def get_user_weekly_stats(
     voice_types = [e.voice_type for e in generated if e.voice_type]
     top_voice_type = max(set(voice_types), key=voice_types.count) if voice_types else 'N/A'
 
-    post_days = [e.day_of_week for e in (mp_posts + fb_posts + group_posts) if e.day_of_week is not None]
+    post_days = [e.day_of_week for e in (mp_posts + fb_posts + group_posts + reel_posts) if e.day_of_week is not None]
     day_names = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
     best_day = day_names[max(set(post_days), key=post_days.count)] if post_days else 'N/A'
 
@@ -57,6 +58,7 @@ async def get_user_weekly_stats(
         'marketplace_posts':  len(mp_posts),
         'fb_posts':           len(fb_posts),
         'group_posts':        len(group_posts),
+        'reel_posts':         len(reel_posts),
         'post_rate_pct':      post_rate,
         'vehicles_sold':      len(sold),
         'top_theme':          top_theme,
@@ -135,6 +137,10 @@ def format_user_report_email(
       <tr style="background:#f9fafb">
         <td style="padding:10px 12px;font-size:13px;color:#374151">👥 Facebook Groups</td>
         <td style="padding:10px 12px;font-size:13px;font-weight:700;color:#1a56db;text-align:right">{stats['group_posts']}</td>
+      </tr>
+      <tr>
+        <td style="padding:10px 12px;font-size:13px;color:#374151">🎬 Facebook Reels</td>
+        <td style="padding:10px 12px;font-size:13px;font-weight:700;color:#1a56db;text-align:right">{stats.get('reel_posts', 0)}</td>
       </tr>
       {sold_row}
     </table>

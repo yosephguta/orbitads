@@ -31,7 +31,7 @@ from app.models.user import User
 # "posted" = the sum of all three posting channels — the SAME definition the
 # weekly report uses (weekly_report.get_user_weekly_stats), so roster / detail /
 # leaderboard never diverge.
-POSTED_EVENTS = ("posted_marketplace", "posted_fb_post", "posted_fb_groups")
+POSTED_EVENTS = ("posted_marketplace", "posted_fb_post", "posted_fb_groups", "posted_fb_reel")
 
 
 async def event_counts(
@@ -154,6 +154,7 @@ async def get_user_activity(
         "posted_marketplace": "marketplace",
         "posted_fb_post": "fb_post",
         "posted_fb_groups": "fb_groups",
+        "posted_fb_reel": "fb_reel",
     }
     posting_rows = (
         await session.exec(
@@ -163,13 +164,13 @@ async def get_user_activity(
         )
     ).all()
     channels_by_listing = {}
-    posted_by_channel = {"marketplace": 0, "fb_post": 0, "fb_groups": 0}
+    posted_by_channel = {"marketplace": 0, "fb_post": 0, "fb_groups": 0, "fb_reel": 0}
     for lid, etype, cnt in posting_rows:
         ch = EVENT_TO_CHANNEL[etype]
         posted_by_channel[ch] += cnt
         if lid is not None:
             channels_by_listing.setdefault(
-                lid, {"marketplace": 0, "fb_post": 0, "fb_groups": 0}
+                lid, {"marketplace": 0, "fb_post": 0, "fb_groups": 0, "fb_reel": 0}
             )[ch] += cnt
 
     ranged = since is not None or until is not None
@@ -196,7 +197,7 @@ async def get_user_activity(
             "created_at": _strip(lst.created_at),
             # which channels this specific car was posted to (from posting events)
             "channels": channels_by_listing.get(
-                lst.id, {"marketplace": 0, "fb_post": 0, "fb_groups": 0}
+                lst.id, {"marketplace": 0, "fb_post": 0, "fb_groups": 0, "fb_reel": 0}
             ),
         })
 

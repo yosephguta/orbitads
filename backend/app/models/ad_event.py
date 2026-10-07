@@ -15,7 +15,7 @@ class AdEvent(SQLModel, table=True):
     # Event type
     event_type: str = Field(max_length=50, index=True)
     # Values: 'generated' | 'generation_failed' | 'posted_marketplace' |
-    #         'posted_fb_post' | 'posted_fb_groups' | 'sold_detected'
+    #         'posted_fb_post' | 'posted_fb_groups' | 'posted_fb_reel' | 'sold_detected'
 
     # Links
     job_id:     Optional[int] = Field(default=None, foreign_key='jobs.id')

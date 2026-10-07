@@ -405,8 +405,9 @@ async def track_posting_event(
     session:      Annotated[AsyncSession, Depends(get_session)],
 ):
     """
-    Track a posting event (posted_marketplace / posted_fb_post / posted_fb_groups)
-    sent from the extension. Records one AdEvent per call — every channel, every time.
+    Track a posting event (posted_marketplace / posted_fb_post / posted_fb_groups /
+    posted_fb_reel) sent from the extension. Records one AdEvent per call — every
+    channel, every time.
 
     If the caller sends a `vin` (new extensions do) and no explicit listing_id, we
     resolve the user's listing by VIN and store its id on the event. That link is
@@ -457,6 +458,7 @@ class FbPostCaptionRequest(BaseModel):
     theme:    str = "hype"
     custom_prompt: Optional[str] = None
     language: Optional[str] = 'en'
+    post_type: Optional[str] = 'post'   # 'post' (FB Post/Groups) | 'reel' — reel = short caption
 
 
 class FbPostCaptionResponse(BaseModel):
@@ -511,7 +513,42 @@ async def generate_fb_post_caption(
         "Solo el nombre del vehículo puede estar en inglés.\n"
     ) if payload.language == 'es' else ""
 
-    prompt = f"""Write a short Facebook post caption for a car salesperson posting a vehicle.
+    if (payload.post_type or 'post').lower() == 'reel':
+        prompt = f"""Write a SHORT Facebook Reel caption for a car salesperson posting a vehicle video.
+{fb_language_rule}
+Vehicle: {vehicle_info}
+Price: {price_clean}
+Mileage: {mileage_str}
+{theme_directive}
+
+FORMATTING RULES — CRITICAL:
+- Each line MUST be on its own line
+- Use a blank line between sections
+- Format like this example:
+  [One punchy hook line with emoji]
+
+  [One or two short lines about the vehicle]
+
+  [CTA line]
+
+  [hashtags]
+
+- NEVER write multiple sentences in the same paragraph
+- Every line starts fresh — never run lines together
+
+Rules:
+- Opening: ONE punchy hook line matching the theme
+- Then ONE or TWO short lines about the vehicle (price/standout feature) — keep each brief
+- NO VIN number
+- NO dealership name
+- NEVER imply the vehicle is privately owned — this is a dealership salesperson
+- End with: "{cta}"
+- 4-6 relevant hashtags on the final line
+- Keep everything BEFORE the hashtags well under 300 characters — Reels captions must be short
+
+Return ONLY the caption. No labels. Preserve all line breaks exactly as written."""
+    else:
+        prompt = f"""Write a short Facebook post caption for a car salesperson posting a vehicle.
 {fb_language_rule}
 Vehicle: {vehicle_info}
 Price: {price_clean}
