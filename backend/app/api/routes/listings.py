@@ -88,6 +88,11 @@ class UpdateSoldStatusRequest(BaseModel):
     checked_ids: list[int]
 
 
+class UpdatePriceRequest(BaseModel):
+    # New raw-scraped baseline price (string, exactly as scraped, e.g. "$30,995").
+    price: Optional[str] = None
+
+
 # ── Generate FB listing description ──────────────────────────
 @router.post("/generate", response_model=GenerateResponse)
 async def generate_listing(
@@ -324,6 +329,56 @@ async def clear_sold(
     session.add(listing)
     await session.commit()
     return {"success": True}
+
+
+@router.patch("/{listing_id}/not-sold")
+async def not_sold(
+    listing_id: int,
+    current_user: Annotated[User, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_session)],
+):
+    """
+    Manual override: the user says this vehicle is NOT sold (the checker got it
+    wrong). Move it back to the active list and RESUME checking it — unlike
+    clear-sold, this keeps fb_posted=True so the next "Check Listings" run
+    includes it again.
+    """
+    listing = await session.get(Listing, listing_id)
+    if not listing or listing.user_id != current_user.id:
+        raise HTTPException(status_code=404, detail="Listing not found")
+
+    listing.is_sold          = False
+    listing.sold_detected_at = None
+    listing.fb_posted        = True   # keep it in the sold-check pool
+    listing.updated_at       = datetime.utcnow()
+    session.add(listing)
+    await session.commit()
+    return {"success": True}
+
+
+@router.patch("/{listing_id}/price")
+async def update_price(
+    listing_id: int,
+    payload: UpdatePriceRequest,
+    current_user: Annotated[User, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_session)],
+):
+    """
+    Set the stored raw-scraped baseline price. Used two ways:
+      1. Auto-rebaseline after "Check Listings" detects a price change (so the
+         next run compares against the new value — no user click required).
+      2. The "Wrong price" manual override, when the user corrects a bad scrape.
+    Stores the price EXACTLY as given (raw scraped string, pre-fee).
+    """
+    listing = await session.get(Listing, listing_id)
+    if not listing or listing.user_id != current_user.id:
+        raise HTTPException(status_code=404, detail="Listing not found")
+
+    listing.price      = payload.price
+    listing.updated_at = datetime.utcnow()
+    session.add(listing)
+    await session.commit()
+    return {"success": True, "price": listing.price}
 
 
 @router.patch("/{listing_id}/posted")
