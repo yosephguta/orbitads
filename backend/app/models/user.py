@@ -22,6 +22,13 @@ class UserBase(SQLModel):
     elevenlabs_voice_id_es: Optional[str] = Field(default='zDMHo7CPscBTgfDtPOWl', max_length=100)
     custom_tagline_es: Optional[str] = Field(default=None, max_length=200)
 
+    # ── Video style (9:16 band/text/CTA customization) ────────
+    video_band_color: Optional[str] = Field(default='#0d1f3c', max_length=20)  # top/bottom band bg
+    video_top_text_mode: str = Field(default='hook_then_vehicle', max_length=30)  # hook_then_vehicle | vehicle_only | custom
+    video_top_custom_text: Optional[str] = Field(default=None, max_length=200)
+    video_cta_mode: str = Field(default='phone', max_length=20)  # phone | dm | custom (phone falls back to dm when no phone saved)
+    video_cta_custom_text: Optional[str] = Field(default=None, max_length=200)
+
     # ── Multi-user / billing fields ───────────────────────────
     dealership_url: Optional[str] = Field(default=None, max_length=500)
     dealership_id: Optional[int] = Field(default=None, foreign_key='dealerships.id')
@@ -98,6 +105,11 @@ class UserRead(SQLModel):
     preferred_language: str
     elevenlabs_voice_id_es: Optional[str]
     custom_tagline_es: Optional[str]
+    video_band_color: Optional[str]
+    video_top_text_mode: str
+    video_top_custom_text: Optional[str]
+    video_cta_mode: str
+    video_cta_custom_text: Optional[str]
     dealership_url: Optional[str]
     terms_agreed_at: Optional[datetime]
     trial_video_count: int
@@ -119,6 +131,11 @@ class UserUpdate(SQLModel):
     preferred_language: Optional[str] = None
     elevenlabs_voice_id_es: Optional[str] = None
     custom_tagline_es: Optional[str] = None
+    video_band_color: Optional[str] = None
+    video_top_text_mode: Optional[str] = None
+    video_top_custom_text: Optional[str] = None
+    video_cta_mode: Optional[str] = None
+    video_cta_custom_text: Optional[str] = None
     dealership_url: Optional[str] = None
     cars_com_url: Optional[str] = None
     cargurus_url: Optional[str] = None

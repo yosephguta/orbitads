@@ -213,6 +213,13 @@ async def _run_pipeline(job_id: int, user_id: int):
             user_elevenlabs_voice_id    = user.elevenlabs_voice_id
             user_elevenlabs_voice_id_es = user.elevenlabs_voice_id_es
 
+            # Video-style settings (9:16 bands/text/CTA)
+            user_video_band_color       = user.video_band_color or "#0d1f3c"
+            user_video_top_text_mode    = user.video_top_text_mode or "hook_then_vehicle"
+            user_video_top_custom_text  = user.video_top_custom_text
+            user_video_cta_mode         = user.video_cta_mode or "phone"
+            user_video_cta_custom_text  = user.video_cta_custom_text
+
         print(f"Pipeline start — job_id={job_id}, vin={job_vin!r}, theme={job_theme!r}, video_type={job_video_type!r}, language={job_language!r}")
 
         # ── Stage 1: VIN decode ───────────────────────────────
@@ -418,6 +425,14 @@ async def _run_pipeline(job_id: int, user_id: int):
                         outro_duration=outro_duration,
                         slideshow_volume=slideshow_volume,
                         language=job_language,
+                        # 9:16 video-style settings
+                        hook_text=(script.get("hook") or "") if isinstance(script, dict) else "",
+                        band_color=user_video_band_color,
+                        top_text_mode=user_video_top_text_mode,
+                        top_custom_text=user_video_top_custom_text,
+                        cta_mode=user_video_cta_mode,
+                        cta_custom_text=user_video_cta_custom_text,
+                        phone_number=user_phone_number,
                     )
 
                 async def _submit_and_wait(photos):

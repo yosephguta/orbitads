@@ -613,6 +613,19 @@ async def update_me(
     if "preferred_language" in updates:
         if updates["preferred_language"] not in ("en", "es"):
             current_user.preferred_language = "en"
+    # ── Video style normalization/validation ──────────────────
+    if "video_top_text_mode" in updates:
+        if updates["video_top_text_mode"] not in ("hook_then_vehicle", "vehicle_only", "custom"):
+            current_user.video_top_text_mode = "hook_then_vehicle"
+    if "video_cta_mode" in updates:
+        if updates["video_cta_mode"] not in ("phone", "dm", "custom"):
+            current_user.video_cta_mode = "phone"
+    if updates.get("video_band_color") is not None:
+        current_user.video_band_color = (payload.video_band_color or "").strip() or "#0d1f3c"
+    if updates.get("video_top_custom_text") == "":
+        current_user.video_top_custom_text = None
+    if updates.get("video_cta_custom_text") == "":
+        current_user.video_cta_custom_text = None
     current_user.updated_at = datetime.utcnow()
     session.add(current_user)
     await session.commit()
