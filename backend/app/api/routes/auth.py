@@ -25,17 +25,7 @@ from app.models.dealership import Dealership
 from app.models.dealer_platform import DealerPlatform
 from app.models.dealer_platform_domain import DealerPlatformDomain
 from app.models.partial_lead import PartialLead
-
-
-def _bare_domain(url):
-    """Lowercase bare host from a URL/domain (no scheme/www/path/query)."""
-    if not url:
-        return None
-    d = str(url).replace("https://", "").replace("http://", "")
-    if d.startswith("www."):
-        d = d[4:]
-    d = d.split("/")[0].split("?")[0].strip().lower()
-    return d or None
+from app.services.config_access import _bare_domain, get_config_access
 from app.services.s3 import upload_bytes, create_presigned_download_url, key_exists
 from app.services.email import send_verification_email, send_welcome_email
 
@@ -395,39 +385,19 @@ async def me(
     current_user: Annotated[User, Depends(get_current_user)],
     session: Annotated[SQLModelAsyncSession, Depends(get_session)],
 ):
-    dealership_required_tagline = None
-    dealership_required_tagline_es = None
-    # Domains this account may use dealer-site configs for. DEALER TAKES PRECEDENCE:
-    # if the user is in a dealership that has an active config, they inherit ONLY
-    # that dealership's config domain(s) — their own pre-assigned dealership_url is
-    # ignored. Otherwise (independent / pre-assigned) they get their own domain.
-    # Computed on read so config re-assignment to the dealership propagates to all
-    # its users with no stale-sync race. (cars.com/cargurus are universal — handled
-    # in the extension, not gated by this list.)
-    allowed_config_domains = []
-    if current_user.dealership_id:
-        dealership = await session.get(Dealership, current_user.dealership_id)
-        if dealership:
-            dealership_required_tagline = dealership.required_tagline
-            dealership_required_tagline_es = dealership.required_tagline_es
-            if dealership.platform_id:
-                platform = await session.get(DealerPlatform, dealership.platform_id)
-                if platform and platform.status == "active":
-                    doms = set()
-                    d = _bare_domain(platform.source_url)
-                    if d:
-                        doms.add(d)
-                    rows = (await session.exec(
-                        select(DealerPlatformDomain.domain).where(
-                            DealerPlatformDomain.platform_id == platform.id
-                        )
-                    )).all()
-                    doms.update(x for x in rows if x)
-                    allowed_config_domains = sorted(doms)
-    if not allowed_config_domains and current_user.dealership_url:
-        d = _bare_domain(current_user.dealership_url)
-        if d:
-            allowed_config_domains = [d]
+    # Domains this account may use dealer-site configs for + the dealership's
+    # required taglines. DEALER TAKES PRECEDENCE: if the user is in a dealership
+    # that has an active config, they inherit ONLY that dealership's config
+    # domain(s) — their own pre-assigned dealership_url is ignored. Otherwise
+    # (independent / pre-assigned) they get their own domain. Computed on read so
+    # config re-assignment to the dealership propagates to all its users with no
+    # stale-sync race. (cars.com/cargurus are universal — handled in the
+    # extension, not gated by this list.) Logic lives in config_access so the
+    # inventory-sync domain check reuses it.
+    _ca = await get_config_access(current_user, session)
+    allowed_config_domains = _ca["allowed_config_domains"]
+    dealership_required_tagline = _ca["required_tagline"]
+    dealership_required_tagline_es = _ca["required_tagline_es"]
 
     settings = get_settings()
     now = datetime.now(timezone.utc)

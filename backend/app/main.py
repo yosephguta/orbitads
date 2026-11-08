@@ -41,7 +41,7 @@ from app.models.dealer_platform_domain import DealerPlatformDomain  # noqa — e
 from app.models.blocked_photo_host import BlockedPhotoHost  # noqa — ensures table is created
 from app.models.saved_script import SavedScript  # noqa — ensures table is created
 from app.models.photo_classification_cache import PhotoClassificationCache  # noqa — ensures table is created
-from app.api.routes import auth, jobs, uploads, photos, listings, billing, outros
+from app.api.routes import auth, jobs, uploads, photos, listings, billing, outros, inventory
 from app.api.routes.dealer_configs import router as dealer_configs_router
 from app.api.routes.saved_scripts import router as saved_scripts_router
 from app.api.routes.admin import router as admin_router
@@ -54,6 +54,7 @@ app.include_router(photos.router,         prefix="/api/v1")
 app.include_router(listings.router,       prefix="/api/v1")
 app.include_router(billing.router,        prefix="/api/v1")
 app.include_router(outros.router,         prefix="/api/v1")
+app.include_router(inventory.router,       prefix="/api/v1")
 app.include_router(dealer_configs_router, prefix="/api/v1")
 app.include_router(saved_scripts_router,  prefix="/api/v1")
 app.include_router(admin_router,          prefix="/api/v1")
