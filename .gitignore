@@ -6,3 +6,4 @@ __pycache__/
 *.pyo
 .DS_Store
 .env
+backend/scripts/jba_config_from_prod.json
