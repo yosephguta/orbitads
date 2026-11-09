@@ -36,7 +36,6 @@ from app.services.s3 import (
     create_presigned_download_url,
     get_audio_duration,
 )
-from app.services.audio_utils import get_audio_level, calculate_volume_multiplier
 from app.services.analytics import track_generation, record_api_usage
 
 router = APIRouter(
@@ -384,6 +383,14 @@ async def _run_pipeline(job_id: int, user_id: int):
                 # 10s fallback (matches the recommended max) — used only for old
                 # outros uploaded before duration_seconds was captured on upload.
                 outro_duration   = 10.0
+                # Slideshow (voiceover) volume is always 1.0; the outro plays at its
+                # native level. The old "audio balance" step here never actually ran
+                # (calculate_volume_multiplier was called without await → the coroutine
+                # raised in the f-string → the except swallowed it → fell back to 1.0),
+                # so every video to date used 1.0. Removed the dead measurement so there
+                # is no wasted S3 download / swallowed exception / "coroutine was never
+                # awaited" warning — behaviour is unchanged. user.outro_volume is unused
+                # (see docs/backend-data-model.md).
                 slideshow_volume = 1.0
                 if job_video_type == "with_outro" and job_outro_video_id:
                     async with AsyncSessionLocal() as session:
@@ -396,17 +403,6 @@ async def _run_pipeline(job_id: int, user_id: int):
                         else:
                             print("Outro not found — assembling slideshow only")
                             outro_s3_key = None
-
-                    if outro_url and outro_s3_key:
-                        try:
-                            outro_level = await get_audio_level(outro_s3_key)
-                            if outro_level is not None:
-                                voiceover_target = -22.0
-                                slideshow_volume = calculate_volume_multiplier(outro_level, voiceover_target)
-                                print(f"Audio balance: outro={outro_level:.1f}dBFS, slideshow_volume={slideshow_volume:.2f}")
-                        except Exception as e:
-                            print(f"Audio level measurement failed, using default: {e}")
-                            slideshow_volume = 1.0
 
                 # Only the photos that will actually appear in the render (not the
                 # whole scraped set) — so any re-hosting downloads the minimum.
