@@ -41,7 +41,9 @@ VIN_RE = re.compile(r"^[A-HJ-NPR-Z0-9]{17}$")
 
 # ── Request / response shapes ─────────────────────────────────
 class InventoryVehicleIn(BaseModel):
-    vin: str
+    # Optional so a card with no detectable VIN doesn't 422 the whole batch — the
+    # route skips it with reason "invalid VIN" (via _clean_vin) instead.
+    vin: Optional[str] = None
     stock_number: Optional[str] = None
     condition: Optional[str] = None
     year: Optional[int] = None
@@ -215,7 +217,7 @@ async def sync_inventory(
     for v in payload.vehicles:
         vin = _clean_vin(v.vin)
         if not vin:
-            skipped.append({"vin": str(v.vin)[:32], "reason": "invalid VIN"})
+            skipped.append({"vin": (str(v.vin)[:32] if v.vin else ""), "reason": "invalid VIN"})
             continue
         if vin in seen_vins:
             skipped.append({"vin": vin, "reason": "duplicate VIN in batch"})
