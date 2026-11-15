@@ -24,12 +24,17 @@ from sqlalchemy import and_, case, func, or_
 from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
+from sqlalchemy.exc import IntegrityError
+
 from app.core.database import get_session
 from app.core.dealership_access import require_dealership_member
 from app.models.dealership_inventory import (
     DealershipInventory,
     DealershipInventoryRead,
 )
+from app.models.inventory_highlights import InventoryHighlights
+from app.services import highlights as highlights_svc
+from app.services.body_style import normalize_body_style
 from app.services.config_access import _bare_domain, get_config_access
 from app.services.vin_decoder import decode_vin
 
@@ -154,6 +159,8 @@ async def _nhtsa_fill_inventory(row_ids: List[int]) -> None:
                     continue
                 # These come only from NHTSA — set when present, don't clobber.
                 row.body_style = vd.get("body_style") or row.body_style
+                # Keep body_class in sync whenever body_style is (re)written.
+                row.body_class = normalize_body_style(row.body_style)
                 row.drivetrain = vd.get("drivetrain") or row.drivetrain
                 row.fuel_type = vd.get("fuel_type") or row.fuel_type
                 row.engine = vd.get("engine") or row.engine
@@ -407,3 +414,302 @@ async def get_inventory_item(
             detail="Inventory item not found.",
         )
     return row
+
+
+# ── PUT /{id}/specs ────────────────────────────────────────────
+# Detail-page (VDP) specs captured by the extension (session 2).
+MAX_SPEC_ROWS = 100
+MAX_HIGHLIGHTS = 60
+MAX_PACKAGES = 30
+MAX_PACKAGE_ITEMS = 60
+STR_CAP = 200
+
+
+class PackageIn(BaseModel):
+    name: Optional[str] = None
+    items: Optional[List[str]] = None
+
+
+class SpecsIn(BaseModel):
+    source_page_url: str
+    spec_table: Optional[dict] = None          # {label: value}
+    highlights: Optional[List[str]] = None
+    packages: Optional[List[PackageIn]] = None
+    window_sticker_url: Optional[str] = None
+    carfax_url: Optional[str] = None
+    stock_number: Optional[str] = None
+    exterior_color: Optional[str] = None
+    interior_color: Optional[str] = None
+    price: Optional[Union[int, str]] = None
+    mileage: Optional[Union[int, str]] = None
+
+
+def _cap_str(v) -> Optional[str]:
+    """Trim + cap a string at STR_CAP chars. None/empty → None."""
+    if v is None:
+        return None
+    s = str(v).strip()
+    if not s:
+        return None
+    return s[:STR_CAP]
+
+
+@router.put("/{inventory_id}/specs", response_model=DealershipInventoryRead)
+async def put_specs(
+    inventory_id: int,
+    payload: SpecsIn,
+    current_user=Depends(require_dealership_member),
+    session: AsyncSession = Depends(get_session),
+):
+    row = await session.get(DealershipInventory, inventory_id)
+    if not row or row.dealership_id != current_user.dealership_id:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Inventory item not found.",
+        )
+
+    # ── Size limits → 422 ──────────────────────────────────────
+    spec_table = payload.spec_table or {}
+    highlights = payload.highlights or []
+    packages = payload.packages or []
+    if len(spec_table) > MAX_SPEC_ROWS:
+        raise HTTPException(422, detail=f"Too many spec rows (max {MAX_SPEC_ROWS}).")
+    if len(highlights) > MAX_HIGHLIGHTS:
+        raise HTTPException(422, detail=f"Too many highlights (max {MAX_HIGHLIGHTS}).")
+    if len(packages) > MAX_PACKAGES:
+        raise HTTPException(422, detail=f"Too many packages (max {MAX_PACKAGES}).")
+    for p in packages:
+        if p.items and len(p.items) > MAX_PACKAGE_ITEMS:
+            raise HTTPException(
+                422, detail=f"Too many items in a package (max {MAX_PACKAGE_ITEMS}).")
+
+    # ── Domain checks → 403 ────────────────────────────────────
+    ca = await get_config_access(current_user, session)
+    allowed_bare = {
+        _bare_domain(d) for d in ca["allowed_config_domains"] if _bare_domain(d)
+    }
+    page_host = _host_of(payload.source_page_url)
+    if not page_host or page_host not in allowed_bare:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={"code": "DOMAIN_NOT_ALLOWED", "domain": page_host},
+        )
+    # source_page_url host must match the row's listing_url host.
+    row_host = _host_of(row.listing_url)
+    if not row_host or page_host != row_host:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={"code": "URL_MISMATCH", "page_host": page_host, "row_host": row_host},
+        )
+
+    # ── Build specs_json (trim + cap strings) ──────────────────
+    clean_spec_table = {}
+    for k, v in spec_table.items():
+        ck = _cap_str(k)
+        cv = _cap_str(v)
+        if ck is not None and cv is not None:
+            clean_spec_table[ck] = cv
+    clean_highlights = [h for h in (_cap_str(x) for x in highlights) if h]
+    clean_packages = []
+    for p in packages:
+        pname = _cap_str(p.name)
+        pitems = [i for i in (_cap_str(x) for x in (p.items or [])) if i]
+        if pname or pitems:
+            clean_packages.append({"name": pname, "items": pitems})
+
+    specs_obj = {
+        "spec_table": clean_spec_table,
+        "highlights": clean_highlights,
+        "packages": clean_packages,
+        "window_sticker_url": _cap_str(payload.window_sticker_url),
+    }
+    row.specs_json = json.dumps(specs_obj)
+    row.specs_source = "detail_page"
+    row.specs_captured_at = datetime.utcnow()
+
+    # ── Merge non-null scalar fields (non-null wins, like sync) ─
+    cx = _cap_str(payload.carfax_url)
+    if cx is not None:
+        row.carfax_url = _strip_url(cx)
+    sn = _cap_str(payload.stock_number)
+    if sn is not None:
+        row.stock_number = sn
+    ec = _cap_str(payload.exterior_color)
+    if ec is not None:
+        row.exterior_color = ec
+    ic = _cap_str(payload.interior_color)
+    if ic is not None:
+        row.interior_color = ic
+    pr = _parse_int(payload.price)
+    if pr is not None:
+        row.price = pr
+    mi = _parse_int(payload.mileage)
+    if mi is not None:
+        row.mileage = mi
+
+    row.updated_at = datetime.utcnow()
+    session.add(row)
+    await session.commit()
+    await session.refresh(row)
+    return row
+
+
+# ── GET /{id}/highlights ───────────────────────────────────────
+@router.get("/{inventory_id}/highlights")
+async def get_highlights(
+    inventory_id: int,
+    current_user=Depends(require_dealership_member),
+    session: AsyncSession = Depends(get_session),
+    language: Optional[str] = Query(default=None),
+):
+    row = await session.get(DealershipInventory, inventory_id)
+    if not row or row.dealership_id != current_user.dealership_id:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Inventory item not found.",
+        )
+
+    lang = language or current_user.highlights_language or "en"
+    if lang not in ("en", "es"):
+        lang = "en"
+
+    want_hash = highlights_svc.compute_input_hash(row, lang)
+    dq = highlights_svc.data_quality(row)
+
+    # Cache hit: existing row for (inventory_id, language) with the same hash.
+    existing = (await session.exec(
+        select(InventoryHighlights).where(
+            InventoryHighlights.inventory_id == row.id,
+            InventoryHighlights.language == lang,
+        )
+    )).first()
+    if existing and existing.input_hash == want_hash:
+        return {
+            "highlights": json.loads(existing.highlights_json or "[]"),
+            "language": lang,
+            "generated_at": existing.updated_at.isoformat(),
+            "data_quality": dq,
+            "cached": True,
+        }
+
+    # Generate (never cache a failure → 502).
+    try:
+        result = await highlights_svc.generate_highlights(row, lang, current_user.id)
+    except highlights_svc.HighlightsUnavailable:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail={"code": "HIGHLIGHTS_UNAVAILABLE"},
+        )
+
+    highlights_json = json.dumps(result["highlights"])
+    now = datetime.utcnow()
+
+    if existing:
+        existing.highlights_json = highlights_json
+        existing.input_hash = want_hash
+        existing.model = result["model"]
+        existing.updated_at = now
+        session.add(existing)
+        await session.commit()
+        await session.refresh(existing)
+        saved = existing
+    else:
+        saved = InventoryHighlights(
+            inventory_id=row.id,
+            language=lang,
+            highlights_json=highlights_json,
+            input_hash=want_hash,
+            model=result["model"],
+            created_at=now,
+            updated_at=now,
+        )
+        session.add(saved)
+        try:
+            await session.commit()
+            await session.refresh(saved)
+        except IntegrityError:
+            # Concurrency: another rep inserted the same (inventory_id, language)
+            # first. Re-read theirs instead of double-inserting.
+            await session.rollback()
+            saved = (await session.exec(
+                select(InventoryHighlights).where(
+                    InventoryHighlights.inventory_id == row.id,
+                    InventoryHighlights.language == lang,
+                )
+            )).first()
+            if saved is None:
+                raise HTTPException(
+                    status_code=status.HTTP_502_BAD_GATEWAY,
+                    detail={"code": "HIGHLIGHTS_UNAVAILABLE"},
+                )
+
+    return {
+        "highlights": json.loads(saved.highlights_json or "[]"),
+        "language": lang,
+        "generated_at": saved.updated_at.isoformat(),
+        "data_quality": dq,
+        "cached": False,
+    }
+
+
+# ── GET /{id}/alternatives ─────────────────────────────────────
+@router.get("/{inventory_id}/alternatives")
+async def get_alternatives(
+    inventory_id: int,
+    current_user=Depends(require_dealership_member),
+    session: AsyncSession = Depends(get_session),
+    limit: int = Query(default=5),
+):
+    row = await session.get(DealershipInventory, inventory_id)
+    if not row or row.dealership_id != current_user.dealership_id:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Inventory item not found.",
+        )
+
+    limit = min(max(limit, 1), 10)
+
+    if not row.body_class:
+        return {"items": [], "reason": "no_body_class"}
+    if row.price is None:
+        return {"items": [], "reason": "no_price"}
+
+    filters = [
+        DealershipInventory.dealership_id == current_user.dealership_id,
+        DealershipInventory.status == "active",
+        DealershipInventory.id != row.id,
+        DealershipInventory.body_class == row.body_class,
+        DealershipInventory.price.is_not(None),
+        DealershipInventory.price >= row.price * 0.9,
+        DealershipInventory.price <= row.price * 1.1,
+    ]
+    if row.year is not None:
+        filters.append(DealershipInventory.year >= row.year - 2)
+        filters.append(DealershipInventory.year <= row.year + 2)
+
+    candidates = (await session.exec(
+        select(DealershipInventory).where(*filters)
+    )).all()
+
+    scored = []
+    for c in candidates:
+        price_diff = (c.price - row.price) if c.price is not None else None
+        year_diff = (c.year - row.year) if (c.year is not None and row.year is not None) else None
+        mileage_diff = (
+            (c.mileage - row.mileage)
+            if (c.mileage is not None and row.mileage is not None) else None
+        )
+        # Closeness score — lower is closer. NULL mileage = neutral (0).
+        score = abs(price_diff) / row.price if price_diff is not None else 0.0
+        if year_diff is not None:
+            score += abs(year_diff) / 5.0
+        if mileage_diff is not None:
+            score += abs(mileage_diff) / 50000.0
+        item = DealershipInventoryRead.model_validate(c).model_dump()
+        item["price_diff"] = price_diff
+        item["year_diff"] = year_diff
+        item["mileage_diff"] = mileage_diff
+        scored.append((score, item))
+
+    scored.sort(key=lambda t: t[0])
+    return {"items": [it for _, it in scored[:limit]], "reason": None}

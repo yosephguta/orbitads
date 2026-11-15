@@ -47,6 +47,17 @@ class DealershipInventory(SQLModel, table=True):
     drivetrain:     Optional[str] = Field(default=None, max_length=100)
     fuel_type:      Optional[str] = Field(default=None, max_length=100)
     engine:         Optional[str] = Field(default=None, max_length=100)
+    # Normalized body style (same mapping as the extension's normalizeBodyStyle,
+    # ported to app/services/body_style.py). Set whenever body_style is written.
+    body_class:     Optional[str] = Field(default=None, max_length=20)
+
+    # ── Detail-page (VDP) specs — captured by the extension in session 2 ───────
+    # specs_json: JSON string {spec_table:{label:value}, highlights:[str],
+    #   packages:[{name, items:[str]}], window_sticker_url:null}. specs_source is
+    #   'detail_page' now ('feed' / 'decoder' later). specs_captured_at naive UTC.
+    specs_json:        Optional[str] = Field(default=None, sa_column=Column(Text))
+    specs_source:      Optional[str] = Field(default=None, max_length=20)
+    specs_captured_at: Optional[datetime] = Field(default=None)
 
     exterior_color: Optional[str] = Field(default=None, max_length=50)
     interior_color: Optional[str] = Field(default=None, max_length=50)
@@ -104,6 +115,10 @@ class DealershipInventoryRead(SQLModel):
     drivetrain: Optional[str]
     fuel_type: Optional[str]
     engine: Optional[str]
+    body_class: Optional[str]
+    specs_json: Optional[str]
+    specs_source: Optional[str]
+    specs_captured_at: Optional[datetime]
     exterior_color: Optional[str]
     interior_color: Optional[str]
     mileage: Optional[int]

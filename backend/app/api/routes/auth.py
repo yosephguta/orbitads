@@ -583,6 +583,10 @@ async def update_me(
     if "preferred_language" in updates:
         if updates["preferred_language"] not in ("en", "es"):
             current_user.preferred_language = "en"
+    # Validate highlights_language (Dealership-tab talking points) — invalid → 'en'
+    if "highlights_language" in updates:
+        if updates["highlights_language"] not in ("en", "es"):
+            current_user.highlights_language = "en"
     # ── Video style normalization/validation ──────────────────
     if "video_top_text_mode" in updates:
         if updates["video_top_text_mode"] not in ("hook_then_vehicle", "vehicle_only", "custom"):

@@ -21,6 +21,11 @@ class UserBase(SQLModel):
     preferred_language: str = Field(default='en', max_length=10)
     elevenlabs_voice_id_es: Optional[str] = Field(default='zDMHo7CPscBTgfDtPOWl', max_length=100)
     custom_tagline_es: Optional[str] = Field(default=None, max_length=200)
+    # Dealership-tab highlights language ('en' | 'es') — chosen in Settings.
+    highlights_language: str = Field(
+        default='en', max_length=2,
+        sa_column_kwargs={'server_default': 'en'},
+    )
 
     # ── Video style (9:16 band/text/CTA customization) ────────
     video_band_color: Optional[str] = Field(default='#0d1f3c', max_length=20)  # top/bottom band bg
@@ -105,6 +110,7 @@ class UserRead(SQLModel):
     preferred_language: str
     elevenlabs_voice_id_es: Optional[str]
     custom_tagline_es: Optional[str]
+    highlights_language: str
     video_band_color: Optional[str]
     video_top_text_mode: str
     video_top_custom_text: Optional[str]
@@ -131,6 +137,7 @@ class UserUpdate(SQLModel):
     preferred_language: Optional[str] = None
     elevenlabs_voice_id_es: Optional[str] = None
     custom_tagline_es: Optional[str] = None
+    highlights_language: Optional[str] = None
     video_band_color: Optional[str] = None
     video_top_text_mode: Optional[str] = None
     video_top_custom_text: Optional[str] = None
