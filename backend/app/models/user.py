@@ -33,6 +33,12 @@ class UserBase(SQLModel):
     video_top_custom_text: Optional[str] = Field(default=None, max_length=200)
     video_cta_mode: str = Field(default='phone', max_length=20)  # phone | dm | custom (phone falls back to dm when no phone saved)
     video_cta_custom_text: Optional[str] = Field(default=None, max_length=200)
+    # Video orientation — vertical 9:16 (default) | horizontal 16:9. Stamped onto
+    # each job at creation (POST /jobs); vertical stays the default.
+    video_orientation: str = Field(
+        default='vertical', max_length=10,
+        sa_column_kwargs={'server_default': 'vertical'},
+    )
 
     # ── Multi-user / billing fields ───────────────────────────
     dealership_url: Optional[str] = Field(default=None, max_length=500)
@@ -116,6 +122,7 @@ class UserRead(SQLModel):
     video_top_custom_text: Optional[str]
     video_cta_mode: str
     video_cta_custom_text: Optional[str]
+    video_orientation: str
     dealership_url: Optional[str]
     terms_agreed_at: Optional[datetime]
     trial_video_count: int
@@ -143,6 +150,7 @@ class UserUpdate(SQLModel):
     video_top_custom_text: Optional[str] = None
     video_cta_mode: Optional[str] = None
     video_cta_custom_text: Optional[str] = None
+    video_orientation: Optional[str] = None
     dealership_url: Optional[str] = None
     cars_com_url: Optional[str] = None
     cargurus_url: Optional[str] = None

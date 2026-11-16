@@ -40,6 +40,13 @@ class Job(SQLModel, table=True):
     car_photo_urls: Optional[str] = Field(default=None, sa_column=Column(Text))
     price: Optional[str] = Field(default=None, max_length=50)
     language: Optional[str] = Field(default='en', max_length=10)
+    # Video orientation — vertical 9:16 (default) | horizontal 16:9. Set at
+    # POST /jobs from the user's setting (NOT part of JobCreate), so old
+    # extensions keep producing vertical.
+    video_orientation: str = Field(
+        default='vertical', max_length=10,
+        sa_column_kwargs={'server_default': 'vertical'},
+    )
 
     # ── Pipeline outputs ──────────────────────────────────────
     vehicle_data: Optional[str] = Field(default=None, sa_column=Column(Text))
@@ -88,6 +95,7 @@ class JobRead(SQLModel):
     final_video_url: Optional[str]
     error_message: Optional[str]
     language: Optional[str]
+    video_orientation: Optional[str]
     created_at: datetime
     updated_at: datetime
     completed_at: Optional[datetime]

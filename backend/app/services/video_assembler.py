@@ -44,6 +44,11 @@ BOTTOM_BAND_H   = 560   # bottom band: y 1360 → 1920
 # buttons/caption. The CTA is lifted above that zone and kept horizontally
 # centered (narrow box) so it never collides with the right-edge buttons.
 
+# ── Horizontal (16:9) ────────────────────────────────────────────
+# 720p (resolution:"hd" = 1280×720), the faithful pre-2026-11-08 output. No
+# bands — dealer photos fill a 16:9 frame, so text is drawn straight over the
+# photo in white with a strong shadow (TEXT_ONLY_SHADOW), on a black letterbox.
+
 # Slideshow effects — cinematic but not distracting
 SLIDESHOW_EFFECTS = [
     {"effect": "zoomIn",  "transition_in": "fade",     "transition_out": "fadeSlow"},
@@ -118,13 +123,14 @@ def _shorten(text: str, limit: int) -> str:
     return text[: limit - 1].rstrip() + "…"
 
 
-def _band_rect_clip(band_color: str, height: int, position: str, duration: float) -> dict:
+def _band_rect_clip(band_color: str, height: int, position: str, duration: float,
+                    canvas_w: int = CANVAS_W) -> dict:
     """A solid, full-width opaque band anchored to the top or bottom."""
     return {
         "asset": {
             "type":   "html",
-            "html":   f'<div style="width:{CANVAS_W}px;height:{height}px;background:{band_color}"></div>',
-            "width":  CANVAS_W,
+            "html":   f'<div style="width:{canvas_w}px;height:{height}px;background:{band_color}"></div>',
+            "width":  canvas_w,
             "height": height,
             "css":    "",
         },
@@ -133,6 +139,14 @@ def _band_rect_clip(band_color: str, height: int, position: str, duration: float
         "start":    0,
         "length":   duration,
     }
+
+
+# Strong multi-layer shadow/outline so white text stays legible directly over a
+# photo (no band behind it) — used by the horizontal (16:9) builder.
+TEXT_ONLY_SHADOW = (
+    "0 0 6px rgba(0,0,0,0.9), 0 2px 8px rgba(0,0,0,0.9), "
+    "1px 1px 0 rgba(0,0,0,0.85), -1px -1px 0 rgba(0,0,0,0.85)"
+)
 
 
 def _band_text_clip(
@@ -145,16 +159,19 @@ def _band_text_clip(
     length: float,
     box_w: int,
     box_h: int,
+    text_color: Optional[str] = None,
+    shadow: str = "0 2px 6px rgba(0,0,0,0.35)",
 ) -> dict:
-    """Centered text drawn over a band."""
-    color = _text_color_for_bg(band_color)
+    """Centered text. By default drawn over a band (auto-contrast color); pass
+    `text_color` + a stronger `shadow` to draw legibly straight over a photo."""
+    color = text_color or _text_color_for_bg(band_color)
     safe  = _html.escape(text)
     inner = (
         f'<div style="display:flex;align-items:center;justify-content:center;'
         f'width:{box_w}px;height:{box_h}px;text-align:center">'
         f'<p style="font-family:Open Sans,sans-serif;font-size:{font_size}px;'
         f'font-weight:700;color:{color};margin:0;padding:0 24px;line-height:1.15;'
-        f'text-shadow:0 2px 6px rgba(0,0,0,0.35)">{safe}</p>'
+        f'text-shadow:{shadow}">{safe}</p>'
         f'</div>'
     )
     return {
@@ -316,6 +333,136 @@ def build_ad_timeline_photo_only(
             "format":      "mp4",
             "size":        {"width": CANVAS_W, "height": CANVAS_H},
             "aspectRatio": "9:16",
+            "fps":         30,
+            "quality":     "high",
+        },
+    }
+
+
+def build_ad_timeline_photo_only_horizontal(
+    audio_url: str,
+    car_photo_urls: list[str],
+    dealership_name: str,
+    vehicle_summary: str,
+    feature_highlights: list[str],
+    duration: float = 24.5,
+    brand_color: str = DEFAULT_BRAND_COLOR,
+    outro_video_url: Optional[str] = None,
+    outro_duration: float = 10.0,
+    slideshow_volume: float = 1.0,
+    language: str = 'en',
+    # ── Video-style settings (per user, from /auth/me) ──────────
+    hook_text: str = "",
+    band_color: str = DEFAULT_BAND_COLOR,
+    top_text_mode: str = "hook_then_vehicle",
+    top_custom_text: Optional[str] = None,
+    cta_mode: str = "phone",
+    cta_custom_text: Optional[str] = None,
+    phone_number: Optional[str] = None,
+) -> dict:
+    """
+    Build a Shotstack 16:9 (720p / 1280×720) slideshow ad with optional outro.
+
+    Text-over-photo layout: photos `fit:contain` (no crop) on a black letterbox,
+    with the top text (hook→vehicle / vehicle / custom) and bottom CTA drawn
+    straight over the photo in bold white with a strong shadow — NO colored bands
+    (those look like label boxes over a full-bleed landscape photo). Honors the
+    top-text-mode and CTA Video Style settings; `band_color` is not used here. The
+    outro plays full-frame after the slideshow (text ends at `duration`).
+    """
+    band_color = (band_color or DEFAULT_BAND_COLOR).strip() or DEFAULT_BAND_COLOR
+
+    max_photos   = timeline_max_photos(duration)
+    photos       = list(car_photo_urls[:max_photos]) or [""]
+    num_photos   = len(photos)
+    photo_len    = round(duration / num_photos, 2)
+    photo_starts = [round(i * photo_len, 2) for i in range(num_photos)]
+
+    vehicle_name = _shorten(vehicle_summary, 42)
+
+    # ── Track 4: Audio — slideshow duration only ──────────────
+    audio_clips = [{
+        "asset":  {"type": "audio", "src": audio_url, "volume": slideshow_volume},
+        "start":  0,
+        "length": duration,
+    }]
+
+    # ── Track 3: Photos (+ outro appended) ────────────────────
+    photo_clips = [
+        _make_photo_clip(url, start, photo_len, i)
+        for i, (url, start) in enumerate(zip(photos, photo_starts))
+    ]
+    if outro_video_url:
+        photo_clips.append({
+            # contain → landscape outro fills a 16:9 frame; a vertical outro is
+            # scaled to full height centered on the band color (no crop). No bands
+            # overlap the outro (band/text clips end at `duration`).
+            "asset": {"type": "video", "src": outro_video_url, "trim": 0},
+            "fit":   "contain",
+            "start":  duration,
+            "length": outro_duration,
+            "transition": {"in": "fade"},
+        })
+
+    # ── Track 1: Text drawn straight over the photo (no bands) ──
+    # Dealer photos fill a 16:9 frame, so solid bands look like clumsy label
+    # boxes. Instead we draw bold WHITE text with a strong shadow/outline that
+    # stays legible over any photo (light or dark). `band_color` is intentionally
+    # unused for the horizontal layout.
+    text_clips = []
+    TOP_BOX_W, TOP_BOX_H = 1200, 120  # centered in top 120px → ~top-third with margin
+    BOT_BOX_W, BOT_BOX_H = 1100, 120  # centered in bottom 120px → above the edge
+    WHITE = "#ffffff"
+
+    def _txt(text, font_size, position, start, length, box_w, box_h):
+        return _band_text_clip(
+            text, band_color, font_size, position, 0.0, start, length, box_w, box_h,
+            text_color=WHITE, shadow=TEXT_ONLY_SHADOW,
+        )
+
+    # Top text — same modes as vertical.
+    if top_text_mode == "custom" and (top_custom_text or "").strip():
+        txt = _shorten(top_custom_text, 60)
+        text_clips.append(_txt(txt, _fit_font_size(txt, 46, 38, 30),
+                               "top", 0, duration, TOP_BOX_W, TOP_BOX_H))
+    elif top_text_mode == "vehicle_only":
+        text_clips.append(_txt(vehicle_name, _fit_font_size(vehicle_name, 48, 40, 34),
+                               "top", 0, duration, TOP_BOX_W, TOP_BOX_H))
+    else:  # hook_then_vehicle (default)
+        hook = _shorten(hook_text, 90)
+        if hook:
+            hook_len = 3.0 if duration > 4.0 else round(duration / 2, 2)
+            text_clips.append(_txt(hook, _fit_font_size(hook, 44, 36, 30),
+                                   "top", 0, hook_len, TOP_BOX_W, TOP_BOX_H))
+            text_clips.append(_txt(vehicle_name, _fit_font_size(vehicle_name, 48, 40, 34),
+                                   "top", hook_len, round(duration - hook_len, 2),
+                                   TOP_BOX_W, TOP_BOX_H))
+        else:
+            text_clips.append(_txt(vehicle_name, _fit_font_size(vehicle_name, 48, 40, 34),
+                                   "top", 0, duration, TOP_BOX_W, TOP_BOX_H))
+
+    # CTA near the bottom edge.
+    cta = _shorten(_cta_text(cta_mode, cta_custom_text, phone_number, language), 60)
+    text_clips.append(_txt(cta, _fit_font_size(cta, 42, 34, 28),
+                           "bottom", 0, duration, BOT_BOX_W, BOT_BOX_H))
+
+    tracks = [
+        {"clips": text_clips},
+        {"clips": photo_clips},
+        {"clips": audio_clips},
+    ]
+
+    return {
+        "timeline": {
+            # Black letterbox for any photo narrower/taller than 16:9 — classic
+            # landscape look, and keeps colored bars from reappearing.
+            "background": "#000000",
+            "tracks":     tracks,
+        },
+        "output": {
+            "format":      "mp4",
+            "resolution":  "hd",      # 1280×720 — faithful pre-2026-11-08 output
+            "aspectRatio": "16:9",
             "fps":         30,
             "quality":     "high",
         },

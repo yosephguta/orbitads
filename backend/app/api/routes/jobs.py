@@ -21,6 +21,7 @@ from app.services.script_generator import generate_ad_script
 from app.services.voice_clone import text_to_speech
 from app.services.video_assembler import (
     build_ad_timeline_photo_only,
+    build_ad_timeline_photo_only_horizontal,
     timeline_max_photos,
     submit_render,
     wait_for_render,
@@ -205,6 +206,7 @@ async def _run_pipeline(job_id: int, user_id: int):
             job_price                   = job.price
             job_outro_video_id          = job.outro_video_id
             job_created_at              = job.created_at
+            job_video_orientation       = job.video_orientation or 'vertical'
 
             user_full_name              = user.full_name
             user_dealership_name        = user.dealership_name
@@ -408,8 +410,17 @@ async def _run_pipeline(job_id: int, user_id: int):
                 # whole scraped set) — so any re-hosting downloads the minimum.
                 used_photos = car_photos[:timeline_max_photos(audio_duration)]
 
+                # Vertical 9:16 (default) or horizontal 16:9 — same video-style
+                # args; the horizontal builder lays the bands/text out on a 1280×720
+                # canvas (bug/plan: Session 3).
+                _builder = (
+                    build_ad_timeline_photo_only_horizontal
+                    if job_video_orientation == "horizontal"
+                    else build_ad_timeline_photo_only
+                )
+
                 def _make_timeline(photos):
-                    return build_ad_timeline_photo_only(
+                    return _builder(
                         audio_url=audio_url,
                         car_photo_urls=photos,
                         dealership_name=user_dealership_name,
@@ -807,6 +818,9 @@ async def create_job(
         voice_s3_key=payload.voice_s3_key,
         car_photo_urls=payload.car_photo_urls,
         language=payload.language or 'en',
+        # Orientation is a per-user setting stamped onto the job at creation (not
+        # part of JobCreate) — old extensions send the same payload and get vertical.
+        video_orientation=current_user.video_orientation or 'vertical',
         status=JobStatus.PENDING,
         progress_pct=0,
     )

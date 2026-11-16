@@ -600,6 +600,9 @@ async def update_me(
         current_user.video_top_custom_text = None
     if updates.get("video_cta_custom_text") == "":
         current_user.video_cta_custom_text = None
+    if "video_orientation" in updates:
+        if updates["video_orientation"] not in ("vertical", "horizontal"):
+            current_user.video_orientation = "vertical"
     current_user.updated_at = datetime.utcnow()
     session.add(current_user)
     await session.commit()
