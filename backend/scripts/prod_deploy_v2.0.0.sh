@@ -63,23 +63,11 @@ if $DRY_RUN; then
   exit 0
 fi
 
-# ── Step 3: Restart the backend ─────────────────────────────────────────────
-# The dealership-tab endpoints are already deployed (included in the S3 session
-# deploy); the migrations above just add the schema they depend on. A restart
-# here clears any lingering state and confirms the service comes up clean.
-echo ">> Step 3: Restarting orbitads service..."
-sudo systemctl restart orbitads
-sleep 3
-echo ""
-
-# ── Step 4: Health check ────────────────────────────────────────────────────
-echo ">> Step 4: Health check..."
-HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" https://api.dealersorbit.com/api/v1/health || echo "FAIL")
-echo "   /health → $HTTP_STATUS"
-if [[ "$HTTP_STATUS" != "200" ]]; then
-  echo "   WARNING: health check returned $HTTP_STATUS. Check logs:"
-  echo "   sudo journalctl -u orbitads -n 50 --no-pager"
-fi
+# ── Step 3: Schema check + restart + health poll ────────────────────────────
+# restart_and_check.sh: schema check → restart → poll /health every 2s for 40s.
+# Exits 1 (without restarting) if schema check fails.
+echo ">> Step 3: Schema check + restart + health check..."
+bash "$BACKEND_DIR/scripts/restart_and_check.sh"
 echo ""
 
 echo "=============================="

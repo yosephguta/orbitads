@@ -21,9 +21,6 @@ from app.core.security import (
     verify_password,
 )
 from app.models.user import User, UserCreate, UserRead, UserUpdate
-from app.models.dealership import Dealership
-from app.models.dealer_platform import DealerPlatform
-from app.models.dealer_platform_domain import DealerPlatformDomain
 from app.models.partial_lead import PartialLead
 from app.services.config_access import _bare_domain, get_config_access
 from app.services.s3 import upload_bytes, create_presigned_download_url, key_exists
@@ -380,21 +377,20 @@ async def contact_support(
 
 
 # ── Me ────────────────────────────────────────────────────────
-@router.get("/me")
-async def me(
-    current_user: Annotated[User, Depends(get_current_user)],
-    session: Annotated[SQLModelAsyncSession, Depends(get_session)],
-):
-    # Domains this account may use dealer-site configs for + the dealership's
-    # required taglines. DEALER TAKES PRECEDENCE: if the user is in a dealership
-    # that has an active config, they inherit ONLY that dealership's config
-    # domain(s) — their own pre-assigned dealership_url is ignored. Otherwise
-    # (independent / pre-assigned) they get their own domain. Computed on read so
-    # config re-assignment to the dealership propagates to all its users with no
-    # stale-sync race. (cars.com/cargurus are universal — handled in the
-    # extension, not gated by this list.) Logic lives in config_access so the
-    # inventory-sync domain check reuses it.
-    _ca = await get_config_access(current_user, session)
+
+async def _build_me_response(
+    user: User,
+    session: SQLModelAsyncSession,
+) -> dict:
+    """
+    Build the full /auth/me response for the given user.
+    Shared by GET and PATCH so both return the same shape with effective
+    entitlement overlay applied — fixes bug #82 root cause.
+    """
+    # Domains + required taglines. DEALER TAKES PRECEDENCE: if the user is in a
+    # dealership with an active config, they inherit that config's domain(s) only.
+    # Logic lives in config_access so the inventory-sync domain check reuses it.
+    _ca = await get_config_access(user, session)
     allowed_config_domains = _ca["allowed_config_domains"]
     dealership_required_tagline = _ca["required_tagline"]
     dealership_required_tagline_es = _ca["required_tagline_es"]
@@ -406,9 +402,9 @@ async def me(
 
     # Effective entitlement (dealership inheritance). eff_status/eff_plan are what
     # the extension shows + gates on — a dealership salesperson reads 'active' /
-    # 'dealership' here even though their own row is trial/none.
+    # 'dealership' even though their own row is trial/none.
     from app.services.entitlement import resolve_entitlement
-    ent = await resolve_entitlement(current_user, session)
+    ent = await resolve_entitlement(user, session)
     eff_status, eff_plan, ent_source = ent["status"], ent["plan"], ent["source"]
 
     if ent_source == "dealership":
@@ -417,18 +413,17 @@ async def me(
         subscription_message = "dealership_inactive"
         is_blocked = True
     elif eff_status == "trial":
-        if current_user.trial_ends_at is not None:
-            trial_end = current_user.trial_ends_at
+        if user.trial_ends_at is not None:
+            trial_end = user.trial_ends_at
             if trial_end.tzinfo is None:
                 trial_end = trial_end.replace(tzinfo=timezone.utc)
             # Dev bypass: never block the test account
-            is_dev = bool(settings.dev_test_email and current_user.email == settings.dev_test_email)
+            is_dev = bool(settings.dev_test_email and user.email == settings.dev_test_email)
             if not is_dev and now > trial_end:
                 subscription_message = "trial_expired"
                 is_blocked = True
-
     elif eff_status == "past_due":
-        updated = current_user.updated_at
+        updated = user.updated_at
         if updated is not None:
             if updated.tzinfo is None:
                 updated = updated.replace(tzinfo=timezone.utc)
@@ -438,15 +433,14 @@ async def me(
         if now > grace_end:
             subscription_message = "past_due"
             is_blocked = True
-
     elif eff_status in ("cancelled", "inactive"):
         subscription_message = "cancelled"
         is_blocked = True
 
     return {
-        **UserRead.model_validate(current_user).model_dump(),
+        **UserRead.model_validate(user).model_dump(),
         # Override with EFFECTIVE plan/status so the extension shows "Dealership"
-        # and gates correctly for inherited team members.
+        # and gates correctly for inherited team members (bug #82 root cause fix).
         "subscription_status": eff_status,
         "purchased_plan": eff_plan,
         "plan_source": ent_source,  # 'own' | 'dealership' | 'dealership_inactive'
@@ -456,6 +450,14 @@ async def me(
         "is_blocked": is_blocked,
         "allowed_config_domains": allowed_config_domains,
     }
+
+
+@router.get("/me")
+async def me(
+    current_user: Annotated[User, Depends(get_current_user)],
+    session: Annotated[SQLModelAsyncSession, Depends(get_session)],
+):
+    return await _build_me_response(current_user, session)
 
 
 @router.get("/voices/preloaded")
@@ -608,19 +610,7 @@ async def update_me(
     await session.commit()
     await session.refresh(current_user)
 
-    dealership_required_tagline = None
-    dealership_required_tagline_es = None
-    if current_user.dealership_id:
-        dealership = await session.get(Dealership, current_user.dealership_id)
-        if dealership:
-            dealership_required_tagline = dealership.required_tagline
-            dealership_required_tagline_es = dealership.required_tagline_es
-
-    return {
-        **UserRead.model_validate(current_user).model_dump(),
-        "dealership_required_tagline": dealership_required_tagline,
-        "dealership_required_tagline_es": dealership_required_tagline_es,
-    }
+    return await _build_me_response(current_user, session)
 
 
 # ── Request dealer site configuration ─────────────────────────
